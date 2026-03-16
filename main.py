@@ -268,6 +268,8 @@ while True:
                     if not executor.has_open_position(symbol):
                         if executor.cancel_all_pending_orders(symbol):
                             log.info(f"🧹 Limpeza: {symbol}")
+                    else:
+                        log.debug(f"ℹ️ {symbol} já tem posição aberta, ignorando sinal.")
                     LAST_ORDER_TIME[symbol] = None
         
         # Relatório de PnL às 20h
