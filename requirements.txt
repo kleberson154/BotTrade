@@ -4,3 +4,4 @@ websocket-client
 python-dotenv
 numpy
 dotenv
+psutil

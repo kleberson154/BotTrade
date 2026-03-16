@@ -2,6 +2,7 @@ import sys
 import io
 import os
 import time
+import gc
 from datetime import datetime, timezone, timedelta
 from queue import Queue
 from threading import Thread
@@ -262,3 +263,6 @@ while True:
     except Exception as e:
         log.error(f"Erro loop principal: {e}")
         time.sleep(5)
+    finally:
+        # Força a limpeza de memória a cada 10 segundos
+        gc.collect()

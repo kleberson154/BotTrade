@@ -87,7 +87,7 @@ class TradingStrategy:
         
         # 4. Indicadores para Votação (no 1m)
         rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
-        macd_line, macd_signal = self.calculate_macd(self.data_1m)
+        macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
         ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
 
         # Verificação anti-erro para MACD (garante que temos valores válidos)
