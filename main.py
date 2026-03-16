@@ -143,8 +143,8 @@ def handle_signal_logic(message):
                 sl, tp = risk_mgr.get_sl_tp_adaptive(symbol, side, current_price, current_atr)
                 
                 # 2. Calcula Alavancagem e Qty baseados no SL
-                # Nota: Use 0.02 para 2% de risco por trade
-                lev, qty = risk_mgr.get_dynamic_risk_params(current_price, sl, balance, risk_pct=0.02)
+                # Passando apenas os 3 argumentos que a função realmente espera
+                lev, qty = risk_mgr.get_dynamic_risk_params(current_price, sl, balance)
                 
                 # 3. Ajuste de Alavancagem na Corretora
                 prepare_leverage(symbol, lev)
