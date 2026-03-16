@@ -118,6 +118,8 @@ def handle_signal_logic(message):
                 available_balance = float(coin_info.get('availableToWithdraw') or 0)
                 wallet_balance = float(coin_info.get('walletBalance') or 0)
 
+                log.info(f"💰 Saldo Identificado: Total ${wallet_balance:.2f} | Disponível ${available_balance:.2f}")
+
                 if available_balance < 2.0: # Se tiver menos de $2 livre, não opera
                     log.warning(f"⚠️ Saldo insuficiente para {symbol}: ${available_balance}")
                     return
