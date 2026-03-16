@@ -130,13 +130,13 @@ def handle_signal_logic(message):
                 pos_resp = session.get_positions(category="linear", settleCoin="USDT")
                 active_positions = [p for p in pos_resp['result']['list'] if float(p['size']) != 0]
 
-                if len(active_positions) >= 3:
-                    log.warning(f"⚠️ Limite de 3 posições atingido. Ignorando {symbol}")
+                if len(active_positions) >= risk_mgr.max_positions:
                     return
 
                 # Busca Saldo para Risco Dinâmico
                 balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-                balance = float(balance_resp['result']['list'][0]['coin'][0]['walletBalance'])
+                available_balance = float(balance_resp['result']['list'][0]['coin'][0]['availableToWithdraw'])
+                wallet_balance = float(balance_resp['result']['list'][0]['coin'][0]['walletBalance'])
                 
                 # --- CÁLCULO DINÂMICO ---
                 # 1. Calcula SL e TP adaptativos primeiro
@@ -144,7 +144,11 @@ def handle_signal_logic(message):
                 
                 # 2. Calcula Alavancagem e Qty baseados no SL
                 # Passando apenas os 3 argumentos que a função realmente espera
-                lev, qty = risk_mgr.get_dynamic_risk_params(current_price, sl, balance)
+                if available_balance < 2.0: # Se tiver menos de 2 dólares livres, nem tenta
+                    log.warning(f"⚠️ Margem muito baixa (${available_balance:.2f}). Abortando {symbol}")
+                    return
+                
+                lev, qty = risk_mgr.get_dynamic_risk_params(current_price, sl, wallet_balance)
                 
                 # 3. Ajuste de Alavancagem na Corretora
                 prepare_leverage(symbol, lev)
