@@ -150,8 +150,11 @@ def handle_signal_logic(message):
                 prepare_leverage(symbol, lev)
                 
                 # 4. Execução Market
-                p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))[1] # Precisão de preço
-                q_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))[0] # Precisão de quantidade
+                q_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))[0] # Pega o primeiro valor (Qty)
+                p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))[1] # Pega o segundo (Preço)
+                
+                # Na hora de enviar a ordem:
+                qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
 
                 if qty > 0:
                     try:
@@ -160,7 +163,7 @@ def handle_signal_logic(message):
                             symbol=symbol,
                             side=side,
                             orderType="Market",
-                            qty=str(round(qty, q_prec)),
+                            qty=qty_str, # Usando a string formatada
                             takeProfit=str(round(tp, p_prec)),
                             stopLoss=str(round(sl, p_prec)),
                             tpOrderType="Market",
