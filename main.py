@@ -1,5 +1,11 @@
+import sys
+import io
+import os
 import time
 from datetime import datetime, timezone, timedelta
+from queue import Queue
+from threading import Thread
+
 from src.connection import get_websocket_session, get_http_session
 from src.strategy import TradingStrategy
 from src.risk_manager import RiskManager
@@ -7,76 +13,69 @@ from src.execution import ExecutionManager
 from src.logger import setup_logger
 from src.notifier import TelegramNotifier
 
-import sys
-import io
-import os
 from dotenv import load_dotenv
 
 # Garante que o terminal aceite UTF-8
 if sys.stdout.encoding != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     
-# Defina o fuso horário de Brasília (UTC-3)
 fuso_brasilia = timezone(timedelta(hours=-3))
-
 load_dotenv()
 
+# --- CONFIGURAÇÕES ---
 API_KEY = os.getenv("BYBIT_API_KEY", "")
 API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 LEVERAGE = int(os.getenv("LEVERAGE", "5"))
-
 _mode = os.getenv("BYBIT_MODE", "demo").lower()
 IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
-
 SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
-WS_RECONNECT_BASE_SECONDS = int(os.getenv("WS_RECONNECT_BASE_SECONDS", "5"))
-WS_RECONNECT_MAX_SECONDS = int(os.getenv("WS_RECONNECT_MAX_SECONDS", "60"))
 
-SALDO_INICIAL_DIA = None
-ULTIMO_RELATORIO_DATA = None
-
-# Dicionário para rastrear o tempo da última ordem por símbolo
-LAST_ORDER_TIME = {symbol: None for symbol in SYMBOLS}
-WS_RECONNECT_ATTEMPTS = 0
-WS_LAST_RECONNECT_TS = 0
-
+# --- INICIALIZAÇÃO DE COMPONENTES ---
 log = setup_logger()
 strategies = {symbol: TradingStrategy(symbol=symbol) for symbol in SYMBOLS}
 risk_mgr = RiskManager()
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
 executor = ExecutionManager(session)
 notifier = TelegramNotifier()
+message_queue = Queue()
 
-notifier.send_message("🤖 *Bot Online!* \nSincronizando dados históricos...")
+LAST_ORDER_TIME = {symbol: None for symbol in SYMBOLS}
+SALDO_INICIAL_DIA = None
+ULTIMO_RELATORIO_DATA = None
 
-def on_message(message):
+# --- LÓGICA DE PROCESSAMENTO (FORA DO WEBSOCKET) ---
+
+def handle_signal_logic(message):
+    """
+    Aqui fica toda a lógica pesada que antes travava o WebSocket.
+    """
     topic = message.get("topic", "")
-  
-    if "data" in message:
-        parts = topic.split('.')
-        timeframe = parts[1] 
-        symbol = parts[-1]
-        
-        candle = message["data"][0]
-        current_price = float(candle["close"])
-        timestamp = int(candle["start"])
-        
-        strat = strategies.get(symbol)
-        if not strat: return
+    parts = topic.split('.')
+    timeframe = parts[1] 
+    symbol = parts[-1]
+    
+    candle = message["data"][0]
+    current_price = float(candle["close"])
+    timestamp = int(candle["start"])
+    
+    strat = strategies.get(symbol)
+    if not strat: return
 
-        # Atualiza dados do candle
-        tf_key = "1m" if timeframe == "1" else "15m"
-        dados_candle = {
-            "close": current_price,
-            "high": float(candle["high"]),   
-            "low": float(candle["low"]),     
-            "timestamp": timestamp
-        }
-        strat.add_new_candle(tf_key, dados_candle)
-        
-        # 3. LÓGICA DE PROTEÇÃO: BREAK-EVEN + TRAILING STOP (No 1m)
-        if tf_key == "1m":
+    # 1. Atualiza dados do candle
+    tf_key = "1m" if timeframe == "1" else "15m"
+    dados_candle = {
+        "close": current_price,
+        "high": float(candle["high"]),   
+        "low": float(candle["low"]),     
+        "timestamp": timestamp
+    }
+    strat.add_new_candle(tf_key, dados_candle)
+    
+    # 2. LÓGICA DE PROTEÇÃO (Apenas no 1m)
+    if tf_key == "1m":
+        try:
+            # CHAMADA HTTP: Se fosse no on_message, causaria timeout no ping/pong
             positions = session.get_positions(category="linear", symbol=symbol)
             for pos in positions['result']['list']:
                 size = float(pos.get('size', 0))
@@ -85,76 +84,81 @@ def on_message(message):
                     side_pos = pos.get('side')
                     current_sl = float(pos.get('stopLoss', 0))
                     
-                    # Cálculo de volatilidade para o Trailing
-                    # O respiro é de 1.5x o ATR atual
                     atr_now = strat.calculate_atr(strat.data_1m, 14).iloc[-1]
                     trailing_dist = atr_now * 1.5 
                     p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))[1]
 
                     if side_pos == "Buy":
-                        # Break-even
                         if current_price >= entry_price * 1.015 and current_sl < entry_price:
                             new_sl = entry_price + (entry_price * 0.001)
                             executor.update_stop_loss(symbol, round(new_sl, p_prec))
                             notifier.send_message(f"🛡️ *Break-even:* {symbol}")
-
-                        # Trailing Stop
                         elif current_price > entry_price * 1.025:
                             potential_sl = current_price - trailing_dist
                             if potential_sl > current_sl + (current_price * 0.001):
                                 executor.update_stop_loss(symbol, round(potential_sl, p_prec))
-                                log.info(f"📈 Trailing {symbol}: {round(potential_sl, p_prec)}")
 
                     elif side_pos == "Sell":
-                        # Break-even
                         if current_price <= entry_price * 0.985 and current_sl > entry_price:
                             new_sl = entry_price - (entry_price * 0.001)
                             executor.update_stop_loss(symbol, round(new_sl, p_prec))
                             notifier.send_message(f"🛡️ *Break-even:* {symbol}")
-
-                        # Trailing Stop
                         elif current_price < entry_price * 0.975:
                             potential_sl = current_price + trailing_dist
                             if potential_sl < current_sl - (current_price * 0.001):
                                 executor.update_stop_loss(symbol, round(potential_sl, p_prec))
+        except Exception as e:
+            log.error(f"Erro na proteção de {symbol}: {e}")
 
-            # 4. VERIFICAÇÃO DE SINAL (Apenas no 1m)
-            signal, current_atr = strat.check_signal()
+        # 3. VERIFICAÇÃO DE SINAL
+        signal, current_atr = strat.check_signal()
+        if signal in ["BUY", "SELL"]:
+            side = "Buy" if signal == "BUY" else "Sell"
             
-            if signal in ["BUY", "SELL"]:
-                side = "Buy" if signal == "BUY" else "Sell"
+            if not executor.has_open_position(symbol):
+                # Outra chamada HTTP pesada
+                pos_resp = session.get_positions(category="linear", settleCoin="USDT")
+                active_positions = [p for p in pos_resp['result']['list'] if float(p['size']) != 0]
+
+                if len(active_positions) >= 3:
+                    log.warning(f"⚠️ Limite atingido. Ignorando {symbol}")
+                    return
+
+                balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+                balance = float(balance_resp['result']['list'][0]['coin'][0]['walletBalance'])
                 
-                if not executor.has_open_position(symbol):
-                    # Trava de ativos simultâneos
-                    pos_resp = session.get_positions(category="linear", settleCoin="USDT")
-                    active_positions = [p for p in pos_resp['result']['list'] if float(p['size']) != 0]
+                qty = risk_mgr.calculate_position_size(symbol, balance, current_price, leverage=LEVERAGE)
+                sl, tp = risk_mgr.get_sl_tp_adaptive(symbol, side, current_price, current_atr)
+                
+                try:
+                    order = session.place_order(
+                        category="linear", symbol=symbol, side=side, orderType="Limit",
+                        price=str(current_price), qty=str(qty), takeProfit=str(tp), stopLoss=str(sl),
+                        tpOrderType="Market", slOrderType="Market", tpslMode="Full", timeInForce="PostOnly"
+                    )
+                    if order['retCode'] == 0:
+                        LAST_ORDER_TIME[symbol] = time.time()
+                        notifier.send_message(f"✅ *Limit Order:* {symbol}\nLado: {side}\nPreço: {current_price}")
+                except Exception as e:
+                    log.error(f"Erro ao abrir ordem: {e}")
 
-                    if len(active_positions) >= 3:
-                        log.warning(f"⚠️ Limite de 3 ativos atingido. Ignorando {symbol}")
-                        return
+def process_queue():
+    """Consome as mensagens da fila infinitamente"""
+    while True:
+        message = message_queue.get()
+        if message is None: break
+        try:
+            handle_signal_logic(message)
+        except Exception as e:
+            log.error(f"Erro no processamento da fila: {e}")
+        message_queue.task_done()
 
-                    # Execução
-                    balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-                    balance = float(balance_resp['result']['list'][0]['coin'][0]['walletBalance'])
-                    
-                    qty = risk_mgr.calculate_position_size(symbol, balance, current_price, leverage=LEVERAGE)
-                    sl, tp = risk_mgr.get_sl_tp_adaptive(symbol, side, current_price, current_atr)
-                    
-                    try:
-                        order = session.place_order(
-                            category="linear", symbol=symbol, side=side, orderType="Limit",
-                            price=str(current_price), qty=str(qty), takeProfit=str(tp), stopLoss=str(sl),
-                            tpOrderType="Market", slOrderType="Market", timeInForce="PostOnly"
-                        )
-                        if order['retCode'] == 0:
-                            LAST_ORDER_TIME[symbol] = time.time()
-                            notifier.send_message(f"✅ *Limit:* {symbol}\nLado: {side}\nPreço: {current_price}")
-                    except Exception as e:
-                        log.error(f"Erro ao abrir ordem: {e}")
-    time.sleep(0.2) # Pequena pausa para evitar sobrecarga de mensagens
+# --- COMPONENTES DO WEBSOCKET ---
 
-# --- WEBSOCKET E WARM-UP ---
-def handle_error(error): log.error(f"🌐 WebSocket: {error}")
+def on_message(message):
+    """Extremamente rápido: apenas coloca na fila e libera o WS"""
+    if "data" in message:
+        message_queue.put(message)
 
 def subscribe_market_streams(ws_client):
     for symbol in SYMBOLS:
@@ -163,33 +167,10 @@ def subscribe_market_streams(ws_client):
 
 def create_and_subscribe_websocket():
     ws_client = get_websocket_session(testnet=IS_TESTNET)
-    ws_client.on_error = handle_error
     subscribe_market_streams(ws_client)
     return ws_client
 
-def reconnect_websocket(old_ws):
-    global WS_RECONNECT_ATTEMPTS, WS_LAST_RECONNECT_TS
-
-    now = time.time()
-    backoff_seconds = min(WS_RECONNECT_MAX_SECONDS, WS_RECONNECT_BASE_SECONDS * (2 ** WS_RECONNECT_ATTEMPTS))
-    elapsed = now - WS_LAST_RECONNECT_TS
-
-    if elapsed < backoff_seconds:
-        wait_left = int(backoff_seconds - elapsed)
-        log.warning(f"⚠️ WebSocket desconectado. Aguardando {wait_left}s para reconectar...")
-        return old_ws
-
-    if old_ws is not None:
-        try:
-            old_ws.exit()
-        except Exception as exit_error:
-            log.warning(f"⚠️ Falha ao encerrar WS antigo: {exit_error}")
-
-    log.warning(f"⚠️ Reconectando WebSocket (tentativa {WS_RECONNECT_ATTEMPTS + 1})...")
-    WS_LAST_RECONNECT_TS = now
-    WS_RECONNECT_ATTEMPTS += 1
-
-    return create_and_subscribe_websocket()
+# --- INICIALIZAÇÃO ---
 
 print("📥 Warm-up...")
 for symbol in SYMBOLS:
@@ -202,25 +183,29 @@ for symbol in SYMBOLS:
             strat.load_historical_data(tf, candles)
     print(f"✅ Pronto: {symbol}")
 
-ws = create_and_subscribe_websocket()
+# Inicia a Thread de processamento antes de abrir o WebSocket
+worker_thread = Thread(target=process_queue, daemon=True)
+worker_thread.start()
 
-# --- LOOP PRINCIPAL ---
+ws = create_and_subscribe_websocket()
+notifier.send_message("🚀 *Bot Operando com Fila e Thread separada!*")
+
+# --- LOOP PRINCIPAL (Monitoramento e Relatórios) ---
 while True:
     try:
         agora = datetime.now(fuso_brasilia)
         timestamp_atual = time.time()
         
-        # LIMPEZA DE ORDENS PARA CADA SÍMBOLO
+        # Limpeza de ordens
         for symbol in SYMBOLS:
             if LAST_ORDER_TIME.get(symbol) is not None:
                 if timestamp_atual - LAST_ORDER_TIME[symbol] > 120:
                     if not executor.has_open_position(symbol):
-                        success = executor.cancel_all_pending_orders(symbol)
-                        if success:
+                        if executor.cancel_all_pending_orders(symbol):
                             log.info(f"🧹 Limpeza: {symbol}")
                     LAST_ORDER_TIME[symbol] = None
         
-        # Saldo Inicial e Relatório
+        # Relatório de PnL às 20h
         if SALDO_INICIAL_DIA is None:
             balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
             SALDO_INICIAL_DIA = float(balance_resp['result']['list'][0]['coin'][0]['walletBalance'])
@@ -235,23 +220,15 @@ while True:
             ULTIMO_RELATORIO_DATA = agora.date()
             SALDO_INICIAL_DIA = saldo_atual 
         
-        # Monitor de Conexão - Melhorado
+        # Monitor de Conexão
         if not ws.is_connected():
-            log.warning("⚠️ WebSocket desconectado. Limpando e reiniciando...")
-            try:
-                ws.exit() # Tenta fechar de forma limpa
-            except:
-                pass
-            time.sleep(10) # Espera o sistema liberar o socket
+            log.warning("⚠️ WebSocket offline. Reconectando...")
             ws = create_and_subscribe_websocket()
-            log.info("✅ Nova conexão estabelecida.")
+            
+        time.sleep(10) # Loop de baixa frequência para o monitor
         
     except KeyboardInterrupt:
-        try:
-            ws.exit()
-        except Exception:
-            pass
         break
     except Exception as e:
-        log.error(f"Erro loop: {e}")
+        log.error(f"Erro loop principal: {e}")
         time.sleep(5)

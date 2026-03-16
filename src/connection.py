@@ -25,18 +25,14 @@ def handle_message(message):
     print(f"Novo preço: {data[0]['close']}")
 
 def get_websocket_session(testnet=False):
-    ping_interval, ping_timeout, retries = _safe_ws_ping_config("WS")
-
-    # Kline/orderbook são canais PÚBLICOS: sempre usam a stream de produção.
-    # demo=True só existe para canais privados (ordens/posições).
+    # Forçamos valores agressivos para manter a conexão ativa
     return WebSocket(
         testnet=testnet,
         channel_type="linear",
-        # Parâmetros de resiliência:
-        ping_interval=ping_interval,
-        ping_timeout=ping_timeout,
-        retries=retries,
-        restart_on_error=True # Tenta reiniciar a thread se der erro
+        ping_interval=20,  # Envia ping a cada 20 segundos
+        ping_timeout=10,   # Se não responder em 10s, considera erro
+        retries=10,
+        restart_on_error=True
     )
 
 def get_private_websocket_session(api_key, api_secret, testnet=False, demo=False):
