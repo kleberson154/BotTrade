@@ -48,20 +48,23 @@ class RiskManager:
             return 5, 0 # Fallback seguro
 
     def get_sl_tp_adaptive(self, symbol, side, current_price, current_atr):
-        # Pega a precisão de preço (índice 1 do map)
         _, p_prec = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
         
-        # Multiplicadores
+        # Se o ATR vier bizarro (ex: maior que 5% do preço), a gente trava ele
+        max_atr_allowed = current_price * 0.02 # No máximo 2% de volatilidade
+        safe_atr = min(current_atr, max_atr_allowed)
+    
         sl_mult = 1.5  
         tp_mult = 3.0  
-
-        dist_sl = current_atr * sl_mult
-        dist_tp = current_atr * tp_mult
-
-        # Garante distância mínima de 0.1% para não dar erro de ordem colada
-        min_dist = current_price * 0.001
-        dist_sl = max(dist_sl, min_dist)
-
+    
+        dist_sl = safe_atr * sl_mult
+        dist_tp = safe_atr * tp_mult
+    
+        # TRAVA DE SANIDADE: O SL não pode ser maior que 5% do preço no 1min
+        max_dist = current_price * 0.05
+        dist_sl = min(dist_sl, max_dist)
+        dist_tp = min(dist_tp, max_dist * 2)
+    
         if side == "Buy":
             sl = current_price - dist_sl
             tp = current_price + dist_tp
