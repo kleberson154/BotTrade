@@ -234,7 +234,7 @@ while True:
         timestamp_atual = time.time()
         
         # --- RELATÓRIO DE "ESTOU VIVO" (A cada 30 minutos) ---
-        if timestamp_atual - ULTIMO_CHECK_VIVO >= 1800: # 1800 segundos = 30 min
+        if timestamp_atual - ULTIMO_CHECK_VIVO >= 60: # 1800 segundos = 30 min
             try:
                 # Busca saldo atualizado
                 balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
