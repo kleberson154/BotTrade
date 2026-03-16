@@ -152,18 +152,27 @@ def handle_signal_logic(message):
                     return
 
                 # C. Busca saldo real disponível
-                balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-                coin_info = balance_resp['result']['list'][0]['coin'][0]
-                
-                # Usamos float(val or 0) para evitar o erro de string vazia ''
-                available_balance = float(coin_info.get('availableToWithdraw') or 0)
-                wallet_balance = float(coin_info.get('walletBalance') or 0)
+                try:
+                    balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+                    coin_info = balance_resp['result']['list'][0]['coin'][0]
 
-                log.info(f"💰 Saldo Identificado: Total ${wallet_balance:.2f} | Disponível ${available_balance:.2f}")
+                    # Tentamos o disponível primeiro
+                    avail = float(coin_info.get('availableToWithdraw') or 0)
+                    total = float(coin_info.get('walletBalance') or 0)
 
-                if available_balance < 2.0: # Se tiver menos de $2 livre, não opera
-                    log.warning(f"⚠️ Saldo insuficiente para {symbol}: ${available_balance}")
-                    return
+                    # SE o disponível for 0 mas o total existir, usamos o total com uma margem de segurança
+                    # Isso resolve o problema de cache da conta demo
+                    if avail == 0 and total > 0:
+                        available_balance = total * 0.95 # Usa 95% do total como "disponível"
+                    else:
+                        available_balance = avail
+
+                    wallet_balance = total
+                    log.info(f"💰 Saldo Atualizado: Total ${wallet_balance:.2f} | Disponível real: ${avail:.2f} | Usando p/ calculo: ${available_balance:.2f}")
+
+                except Exception as e:
+                    log.error(f"Erro ao ler saldo: {e}")
+                    available_balance = 0
 
                 # --- CÁLCULO DE PARÂMETROS ---
                 side = "Buy" if signal == "BUY" else "Sell"
