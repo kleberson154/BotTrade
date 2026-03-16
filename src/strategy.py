@@ -137,45 +137,62 @@ class TradingStrategy:
         else: self.data_15m = new_df
         
     def monitor_protection(self, current_price):
-        """
-        Gerencia Break-even e Trailing Stop. 
-        Retorna 'UPDATE_SL' se o Stop Loss precisar ser alterado na Bybit.
-        """
         if not self.is_positioned:
             return None
 
-        atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
+        # Usamos o ATR para calcular a distância do Trailing
+        atr_series = self.calculate_atr(self.data_1m, 14)
+        if len(atr_series) < 1: return None
+        atr = atr_series.iloc[-1]
         if atr <= 0: return None
 
         changed = False
         
-        # --- LÓGICA PARA COMPRA (LONG) ---
         if self.side == "BUY":
-            # 1. GATILHO BREAK-EVEN (Lucro de 0.4%)
-            if not self.be_activated and current_price >= self.entry_price * 1.004:
-                self.sl_price = self.entry_price + (atr * 0.1) # Entrada + um pequeno fôlego
-                self.be_activated = True
-                changed = True
-            
-            # 2. TRAILING STOP (Acompanha o preço a uma distância de 1.5x ATR)
-            # Só move se o novo SL for maior que o atual (para nunca baixar o stop)
-            novo_sl_trail = current_price - (atr * 1.5)
-            if novo_sl_trail > self.sl_price:
-                self.sl_price = novo_sl_trail
-                changed = True
+            # 1. BREAK-EVEN: Se lucrar 0.5%, move o SL para Entrada + 0.1% (taxas)
+            if not self.be_activated and current_price >= self.entry_price * 1.005:
+                new_sl = self.entry_price * 1.001 
+                if new_sl > self.sl_price:
+                    self.sl_price = new_sl
+                    self.be_activated = True
+                    changed = True
+                    log.info(f"🛡️ {self.symbol} - GATILHO: Break-even ativado.")
 
-        # --- LÓGICA PARA VENDA (SHORT) ---
+            # 2. TRAILING STOP: Mantém o SL a 2x ATR de distância do topo
+            # Só sobe o SL, nunca desce.
+            trail_sl = current_price - (atr * 2.0)
+            if trail_sl > self.sl_price:
+                # Evita micro-ajustes para não sobrecarregar a API
+                if (trail_sl - self.sl_price) / self.sl_price > 0.001: 
+                    self.sl_price = trail_sl
+                    changed = True
+
         elif self.side == "SELL":
-            # 1. GATILHO BREAK-EVEN
-            if not self.be_activated and current_price <= self.entry_price * 0.996:
-                self.sl_price = self.entry_price - (atr * 0.1)
-                self.be_activated = True
-                changed = True
+            # 1. BREAK-EVEN: Se cair 0.5%, move o SL para Entrada - 0.1%
+            if not self.be_activated and current_price <= self.entry_price * 0.995:
+                new_sl = self.entry_price * 0.999
+                if new_sl < self.sl_price or self.sl_price == 0:
+                    self.sl_price = new_sl
+                    self.be_activated = True
+                    changed = True
+                    log.info(f"🛡️ {self.symbol} - GATILHO: Break-even ativado.")
 
-            # 2. TRAILING STOP
-            novo_sl_trail = current_price + (atr * 1.5)
-            if novo_sl_trail < self.sl_price:
-                self.sl_price = novo_sl_trail
-                changed = True
+            # 2. TRAILING STOP: Mantém o SL a 2x ATR acima do fundo
+            trail_sl = current_price + (atr * 2.0)
+            if trail_sl < self.sl_price or self.sl_price == 0:
+                if (self.sl_price - trail_sl) / trail_sl > 0.001:
+                    self.sl_price = trail_sl
+                    changed = True
 
         return "UPDATE_SL" if changed else None
+    
+    def sync_position(self, side, entry_price, sl_price, tp_price):
+        self.is_positioned = True
+        self.side = "BUY" if side == "Buy" else "SELL"
+        self.entry_price = float(entry_price)
+        self.sl_price = float(sl_price)
+        self.tp_price = float(tp_price)
+        # Se o SL já estiver no preço de entrada ou melhor, ativa o BE
+        if (self.side == "BUY" and self.sl_price >= self.entry_price) or \
+           (self.side == "SELL" and self.sl_price <= self.entry_price):
+            self.be_activated = True

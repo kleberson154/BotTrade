@@ -60,6 +60,28 @@ def prepare_leverage(symbol, leverage_value):
     except Exception as e:
         if "110043" not in str(e): # Ignora erro se já estiver na alavancagem correta
             log.error(f"❌ Erro alavancagem {symbol}: {e}")
+            
+def sync_open_positions():
+    log.info("sync_open_positions - 🔄 Sincronizando posições abertas com a Bybit...")
+    try:
+        pos_resp = session.get_positions(category="linear", settleCoin="USDT")
+        if pos_resp['retCode'] == 0:
+            positions = pos_resp['result']['list']
+            for p in positions:
+                symbol = p['symbol']
+                size = float(p['size'])
+                
+                if size > 0 and symbol in strategies:
+                    strat = strategies[symbol]
+                    strat.sync_position(
+                        side=p['side'],
+                        entry_price=p['avgPrice'],
+                        sl_price=p['stopLoss'],
+                        tp_price=p['takeProfit']
+                    )
+                    log.info(f"✅ Sincronizado: {symbol} | Entrada: {p['avgPrice']} | SL: {p['stopLoss']}")
+    except Exception as e:
+        log.error(f"❌ Erro ao sincronizar posições: {e}")
 
 def handle_signal_logic(message):
     topic = message.get("topic", "")
@@ -215,6 +237,8 @@ for symbol in SYMBOLS:
             candles.reverse()
             strat.load_historical_data(tf, candles)
     print(f"✅ Pronto: {symbol}")
+    
+sync_open_positions()
 
 worker_thread = Thread(target=process_queue, daemon=True)
 worker_thread.start()
