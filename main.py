@@ -173,7 +173,7 @@ def handle_signal_logic(message):
                         if order['retCode'] == 0:
                             LAST_ORDER_TIME[symbol] = time.time()
                             notifier.send_message(
-                                f"🚀 *Execução Market: {symbol}*\n"
+                                f"✅​ *Limit Order: {symbol}*\n"
                                 f"Lado: {side} | Alav: {lev}x\n"
                                 f"Preço: {current_price}\n"
                                 f"SL: {sl} | TP: {tp}"
