@@ -113,6 +113,12 @@ def handle_signal_logic(message):
         # 3. VERIFICAÇÃO DE SINAL
         signal, current_atr = strat.check_signal()
         if signal in ["BUY", "SELL"]:
+            # --- NOVA TRAVA: Evita duplicar ordens no mesmo minuto ---
+            current_minute = datetime.now().minute
+            if hasattr(strat, 'last_signal_min') and strat.last_signal_min == current_minute:
+                return # Já tentou operar neste minuto, ignora
+            strat.last_signal_min = current_minute
+            
             side = "Buy" if signal == "BUY" else "Sell"
             
             if not executor.has_open_position(symbol):
@@ -129,6 +135,17 @@ def handle_signal_logic(message):
                 
                 qty = risk_mgr.calculate_position_size(symbol, balance, current_price, leverage=LEVERAGE)
                 sl, tp = risk_mgr.get_sl_tp_adaptive(symbol, side, current_price, current_atr)
+                
+                try:
+                    # Pega o saldo disponível real (free margin)
+                    free_balance = float(balance_resp['result']['list'][0]['coin'][0]['availableToWithdraw'])
+                    order_margin_required = (qty * current_price) / LEVERAGE
+
+                    if order_margin_required > free_balance:
+                        log.warning(f"⚠️ Saldo insuficiente para {symbol}. Requerido: {order_margin_required}, Livre: {free_balance}")
+                        return
+                except:
+                    pass # Se falhar a leitura do saldo, segue com tentativa de ordem
                 
                 try:
                     order = session.place_order(
@@ -182,6 +199,19 @@ for symbol in SYMBOLS:
             candles.reverse()
             strat.load_historical_data(tf, candles)
     print(f"✅ Pronto: {symbol}")
+    # --- VALIDAÇÃO DE DADOS ---
+    print("📊 Validando indicadores...")
+    for symbol in SYMBOLS:
+        strat = strategies[symbol]
+        if len(strat.data_1m) >= 14:
+            # Tenta calcular o ATR
+            test_atr = strat.calculate_atr(strat.data_1m, 14).iloc[-1]
+            if test_atr > 0:
+                log.info(f"✅ {symbol} ATR: {test_atr:.4f} | Preço: {strat.data_1m['close'].iloc[-1]}")
+            else:
+                log.error(f"❌ {symbol} ATR inválido (Zero ou Negativo)!")
+        else:
+            log.warning(f"⚠️ {symbol} dados insuficientes para ATR (Candles: {len(strat.data_1m)})")
 
 # Inicia a Thread de processamento antes de abrir o WebSocket
 worker_thread = Thread(target=process_queue, daemon=True)

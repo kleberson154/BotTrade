@@ -17,12 +17,22 @@ class TradingStrategy:
         return True
     
     def calculate_atr(self, df, period=14):
+        if len(df) < period:
+            # Se não houver dados suficientes, retorna uma série de zeros
+            return pd.Series(0, index=df.index)
+
         high_low = df['high'] - df['low']
         high_close = (df['high'] - df['close'].shift()).abs()
         low_close = (df['low'] - df['close'].shift()).abs()
+
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
-        return true_range.rolling(window=period).mean()
+
+        # Usamos o Simple Moving Average do True Range (SMA ATR)
+        # fillna(0) garante que o bot não receba um "NaN" e quebre o cálculo do SL
+        atr = true_range.rolling(window=period).mean().fillna(0)
+
+        return atr
 
     def add_new_candle(self, timeframe, candle_data):
         df = self.data_1m if timeframe == "1m" else self.data_15m
@@ -53,17 +63,23 @@ class TradingStrategy:
         exp2 = df['close'].ewm(span=slow, adjust=False).mean()
         macd_line = exp1 - exp2
         signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-        return macd_line, signal_line
+        # Dentro do calculate_macd
+        histogram = macd_line - signal_line
+        return macd_line, signal_line, histogram
 
     def check_signal(self):
         # 1. Filtros de Segurança Básicos
-        if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
+        # Garantimos que existam dados suficientes para os indicadores (EMA 200 precisa de 200 candles)
+        if len(self.data_1m) < 35 or len(self.data_15m) < 200:
             return "HOLD", 0
         
         # 2. Cálculo de Volatilidade (ATR)
-        atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
+        atr_series = self.calculate_atr(self.data_1m, 14)
+        atr = atr_series.iloc[-1]
         current_price = self.data_1m['close'].iloc[-1]
-        if (atr / current_price) < self.min_atr_threshold:
+
+        # Evita operar se o ATR falhar ou se o mercado estiver "morto"
+        if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
             return "HOLD", 0
 
         # 3. Tendência Macro (EMA 200 no 15m)
@@ -72,25 +88,33 @@ class TradingStrategy:
         # 4. Indicadores para Votação (no 1m)
         rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
         macd_line, macd_signal = self.calculate_macd(self.data_1m)
-        ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1] # Média curta para pullback
+        ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
+
+        # Verificação anti-erro para MACD (garante que temos valores válidos)
+        if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
+            return "HOLD", 0
 
         score = 0
         
         # --- LÓGICA DE COMPRA (LONG) ---
+        # Tendência de alta no 15m
         if current_price > ema_200_15m:
-            if rsi_1m < 30: score += 1
-            if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
-            if current_price < ema_20_1m: score += 1 # Pullback: preço abaixo da média curta
+            if rsi_1m < 40: score += 1                # RSI em zona de sobrevenda ou neutra-baixa
+            if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1 # Cruzamento de alta
+            if current_price < ema_20_1m: score += 1  # Pullback (preço "barato" em relação à média curta)
             
-            if score >= 3: return "BUY", atr
+            if score >= 3: 
+                return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
+        # Tendência de baixa no 15m
         elif current_price < ema_200_15m:
-            if rsi_1m > 70: score += 1
-            if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
-            if current_price > ema_20_1m: score += 1 # Pullback: preço acima da média curta
+            if rsi_1m > 60: score += 1                # RSI em zona de sobrecompra ou neutra-alta
+            if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1 # Cruzamento de baixa
+            if current_price > ema_20_1m: score += 1  # Pullback (preço "caro" em relação à média curta)
             
-            if score >= 3: return "SELL", atr
+            if score >= 3: 
+                return "SELL", atr
             
         return "HOLD", 0
     

@@ -35,19 +35,26 @@ class RiskManager:
             return int(qty)
         return round(float(qty), qty_precision)
 
-    def get_sl_tp_adaptive(self, symbol, side, current_price, atr):
-        price_precision = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])[1]
+    def get_sl_tp_adaptive(self, symbol, side, current_price, current_atr):
+        # Obtém a precisão correta para cada moeda (Ex: XRP=4 casas, BTC=2 casas)
+        tick_size, p_prec = self.PRECISION_MAP.get(symbol, (0.0001, 4))
         
-        price = float(current_price)
-        # ATR Adaptativo: 2x para Stop (Segurança) e 3x para Take (Lucro)
-        sl_distance = atr * 2
-        tp_distance = atr * 3
+        # Multiplicadores de risco (ajuste conforme seu perfil)
+        sl_mult = 1.5  # Stop Loss a 1.5x a volatilidade atual
+        tp_mult = 3.0  # Take Profit a 3x a volatilidade atual (Risco:Retorno 1:2)
+
+        # Distância mínima de segurança (0.1% do preço) 
+        # para evitar o erro de "SL acima do preço atual"
+        min_dist = current_price * 0.001 
+        dist_sl = max(current_atr * sl_mult, min_dist)
+        dist_tp = max(current_atr * tp_mult, min_dist * 2)
 
         if side == "Buy":
-            sl = price - sl_distance
-            tp = price + tp_distance
+            sl = min(current_price - dist_sl, current_price - tick_size) # Garante que está ABAIXO
+            tp = current_price + dist_tp
         else:
-            sl = price + sl_distance
-            tp = price - tp_distance
+            sl = max(current_price + dist_sl, current_price + tick_size) # Garante que está ACIMA
+            tp = current_price - dist_tp
             
-        return round(sl, price_precision), round(tp, price_precision)
+        # Arredonda conforme as regras da exchange
+        return round(sl, p_prec), round(tp, p_prec)

@@ -31,7 +31,7 @@ def get_websocket_session(testnet=False):
         channel_type="linear",
         ping_interval=20,  # Envia ping a cada 20 segundos
         ping_timeout=10,   # Se não responder em 10s, considera erro
-        retries=10,
+        retries=20,
         restart_on_error=True
     )
 
