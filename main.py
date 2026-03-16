@@ -32,6 +32,9 @@ IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
 SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
 
+# --- CONFIGURAÇÕES DE RELATÓRIO ---
+ULTIMO_CHECK_VIVO = 0  # Armazena o timestamp do último aviso
+
 # --- INICIALIZAÇÃO DE COMPONENTES ---
 log = setup_logger()
 strategies = {symbol: TradingStrategy(symbol=symbol) for symbol in SYMBOLS}
@@ -59,6 +62,9 @@ def handle_signal_logic(message):
     candle = message["data"][0]
     current_price = float(candle["close"])
     timestamp = int(candle["start"])
+    # ADICIONE ESTA LINHA ABAIXO PARA TESTE:
+    if int(time.time()) % 30 == 0: # Imprime apenas a cada 30 segundos para não poluir
+        print(f"🕒 [CHECK] {symbol} ativo. Preço: {current_price} | Aguardando sinal...")
     
     strat = strategies.get(symbol)
     if not strat: return
@@ -226,6 +232,34 @@ while True:
     try:
         agora = datetime.now(fuso_brasilia)
         timestamp_atual = time.time()
+        
+        # --- RELATÓRIO DE "ESTOU VIVO" (A cada 30 minutos) ---
+        if timestamp_atual - ULTIMO_CHECK_VIVO >= 1800: # 1800 segundos = 30 min
+            try:
+                # Busca saldo atualizado
+                balance_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+                if balance_resp['retCode'] == 0:
+                    coin_data = balance_resp['result']['list'][0]['coin'][0]
+                    saldo_total = float(coin_data['walletBalance'])
+                    pnl_dia = saldo_total - SALDO_INICIAL_DIA
+                    
+                    # Formata a lista de moedas que estão sendo monitoradas
+                    moedas_texto = ", ".join(SYMBOLS)
+                    
+                    msg = (
+                        f"🤖 *Bot Heartbeat (30 min)*\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"✅ *Status:* Operando\n"
+                        f"💰 *Saldo Atual:* ${saldo_total:.2f}\n"
+                        f"📈 *PnL Hoje:* ${pnl_dia:.2f}\n"
+                        f"🪙 *Monitorando:* `{moedas_texto}`\n"
+                        f"📡 *Fila de Sinais:* {message_queue.qsize()} pendentes"
+                    )
+                    notifier.send_message(msg)
+                    ULTIMO_CHECK_VIVO = timestamp_atual
+                    log.info("📡 Heartbeat enviado para o Telegram.")
+            except Exception as e:
+                log.error(f"Erro ao enviar heartbeat: {e}")
         
         # Limpeza de ordens
         for symbol in SYMBOLS:
