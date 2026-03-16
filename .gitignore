@@ -1,0 +1,16 @@
+# Chaves e Segredos (MUITO IMPORTANTE)
+.env
+
+# Ambientes Virtuais
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Logs do Bot
+*.log
+logs/
+
+# Arquivos do Sistema
+.DS_Store
+Thumbs.db

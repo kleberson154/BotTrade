@@ -1,0 +1,6 @@
+pybit 
+pandas 
+websocket-client
+python-dotenv
+numpy
+dotenv
