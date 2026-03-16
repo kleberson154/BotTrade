@@ -87,8 +87,27 @@ def handle_signal_logic(message):
     strat.add_new_candle(tf_key, dados_candle)
     
     if tf_key == "1m":
-        # 1. PROTEÇÃO (Trailing Stop / Break-even)
-        # Omitido aqui para brevidade, mantenha sua lógica de proteção se desejar
+        # 1. SINCRONIZAÇÃO E PROTEÇÃO
+        # Verifica se a posição ainda existe na Bybit
+        pos_resp = session.get_positions(category="linear", symbol=symbol)
+        size = float(pos_resp['result']['list'][0].get('size', 0))
+        
+        if size == 0:
+            strat.is_positioned = False # Reset se fechou no dedo ou TP/SL
+        else:
+            # Se está posicionado, monitora a proteção
+            if strat.monitor_protection(current_price) == "UPDATE_SL":
+                try:
+                    _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+                    session.set_trading_stop(
+                        category="linear",
+                        symbol=symbol,
+                        stopLoss=str(round(strat.sl_price, p_prec)),
+                        tpslMode="Full"
+                    )
+                    log.info(f"🛡️ Proteção Ajustada ({symbol}): SL em {strat.sl_price}")
+                except Exception as e:
+                    log.error(f"Erro ao atualizar Stop: {e}")
         
         # 2. VERIFICAÇÃO DE SINAL
         signal, current_atr = strat.check_signal()
@@ -144,7 +163,16 @@ def handle_signal_logic(message):
                 )
 
                 if order['retCode'] == 0:
+                    # Registra o sinal para evitar repetição no mesmo minuto
                     strat.last_signal_min = current_minute
+                    
+                    # --- VITAL PARA O BREAK-EVEN/TRAILING ---
+                    strat.is_positioned = True
+                    strat.side = "BUY" if signal == "BUY" else "SELL"
+                    strat.entry_price = current_price
+                    strat.sl_price = sl
+                    strat.be_activated = False 
+                    # ----------------------------------------
                     notifier.send_message(f"✅ *Ordem Aberta:* {symbol}\nLado: {side}\nAlav: {lev}x | Qty: {qty_str}")
                 else:
                     log.error(f"❌ Erro Bybit ({symbol}): {order['retMsg']}")

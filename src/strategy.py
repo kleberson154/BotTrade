@@ -9,6 +9,14 @@ class TradingStrategy:
         self.data_15m = pd.DataFrame()
         self.min_atr_threshold = 0.0002 # Filtro de 0.02% de volatilidade mínima
         
+        # --- NOVAS VARIÁVEIS DE CONTROLE ---
+        self.is_positioned = False
+        self.side = None  # "BUY" ou "SELL"
+        self.entry_price = 0
+        self.sl_price = 0
+        self.tp_price = 0
+        self.be_activated = False # Trava para não tentar mover o BE várias vezes
+        
     def is_market_safe(self):
         agora = datetime.datetime.now()
         # Evita os primeiros e últimos 5 minutos de cada hora (volatilidade institucional)
@@ -127,3 +135,47 @@ class TradingStrategy:
         new_df = pd.DataFrame(df_data)
         if timeframe_label == "1m": self.data_1m = new_df
         else: self.data_15m = new_df
+        
+    def monitor_protection(self, current_price):
+        """
+        Gerencia Break-even e Trailing Stop. 
+        Retorna 'UPDATE_SL' se o Stop Loss precisar ser alterado na Bybit.
+        """
+        if not self.is_positioned:
+            return None
+
+        atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
+        if atr <= 0: return None
+
+        changed = False
+        
+        # --- LÓGICA PARA COMPRA (LONG) ---
+        if self.side == "BUY":
+            # 1. GATILHO BREAK-EVEN (Lucro de 0.4%)
+            if not self.be_activated and current_price >= self.entry_price * 1.004:
+                self.sl_price = self.entry_price + (atr * 0.1) # Entrada + um pequeno fôlego
+                self.be_activated = True
+                changed = True
+            
+            # 2. TRAILING STOP (Acompanha o preço a uma distância de 1.5x ATR)
+            # Só move se o novo SL for maior que o atual (para nunca baixar o stop)
+            novo_sl_trail = current_price - (atr * 1.5)
+            if novo_sl_trail > self.sl_price:
+                self.sl_price = novo_sl_trail
+                changed = True
+
+        # --- LÓGICA PARA VENDA (SHORT) ---
+        elif self.side == "SELL":
+            # 1. GATILHO BREAK-EVEN
+            if not self.be_activated and current_price <= self.entry_price * 0.996:
+                self.sl_price = self.entry_price - (atr * 0.1)
+                self.be_activated = True
+                changed = True
+
+            # 2. TRAILING STOP
+            novo_sl_trail = current_price + (atr * 1.5)
+            if novo_sl_trail < self.sl_price:
+                self.sl_price = novo_sl_trail
+                changed = True
+
+        return "UPDATE_SL" if changed else None
