@@ -156,9 +156,9 @@ def handle_signal_logic(message):
                 
                 try:
                     order = session.place_order(
-                        category="linear", symbol=symbol, side=side, orderType="Limit",
-                        price=str(current_price), qty=str(qty), takeProfit=str(tp), stopLoss=str(sl),
-                        tpOrderType="Market", slOrderType="Market", tpslMode="Full", timeInForce="PostOnly"
+                        category="linear", symbol=symbol, side=side, orderType="Market",
+                        qty=str(qty), takeProfit=str(tp), stopLoss=str(sl),
+                        tpOrderType="Market", slOrderType="Market", tpslMode="Full"
                     )
                     if order['retCode'] == 0:
                         LAST_ORDER_TIME[symbol] = time.time()
