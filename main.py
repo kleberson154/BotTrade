@@ -1,5 +1,5 @@
 import time
-import datetime
+from datetime import datetime, timezone, timedelta
 from src.connection import get_websocket_session, get_http_session
 from src.strategy import TradingStrategy
 from src.risk_manager import RiskManager
@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 # Garante que o terminal aceite UTF-8
 if sys.stdout.encoding != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
+# Defina o fuso horário de Brasília (UTC-3)
+fuso_brasilia = timezone(timedelta(hours=-3))
 
 load_dotenv()
 
@@ -148,6 +151,7 @@ def on_message(message):
                             notifier.send_message(f"✅ *Limit:* {symbol}\nLado: {side}\nPreço: {current_price}")
                     except Exception as e:
                         log.error(f"Erro ao abrir ordem: {e}")
+    time.sleep(0.2) # Pequena pausa para evitar sobrecarga de mensagens
 
 # --- WEBSOCKET E WARM-UP ---
 def handle_error(error): log.error(f"🌐 WebSocket: {error}")
@@ -203,7 +207,7 @@ ws = create_and_subscribe_websocket()
 # --- LOOP PRINCIPAL ---
 while True:
     try:
-        agora = datetime.datetime.now()
+        agora = datetime.now(fuso_brasilia)
         timestamp_atual = time.time()
         
         # LIMPEZA DE ORDENS PARA CADA SÍMBOLO
@@ -231,13 +235,16 @@ while True:
             ULTIMO_RELATORIO_DATA = agora.date()
             SALDO_INICIAL_DIA = saldo_atual 
         
+        # Monitor de Conexão - Melhorado
         if not ws.is_connected():
-            ws = reconnect_websocket(ws)
-        elif WS_RECONNECT_ATTEMPTS > 0:
-            log.info("✅ WebSocket reconectado e estável.")
-            WS_RECONNECT_ATTEMPTS = 0
-        
-        time.sleep(10)
+            log.warning("⚠️ WebSocket desconectado. Limpando e reiniciando...")
+            try:
+                ws.exit() # Tenta fechar de forma limpa
+            except:
+                pass
+            time.sleep(10) # Espera o sistema liberar o socket
+            ws = create_and_subscribe_websocket()
+            log.info("✅ Nova conexão estabelecida.")
         
     except KeyboardInterrupt:
         try:
