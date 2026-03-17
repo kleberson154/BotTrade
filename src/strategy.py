@@ -84,6 +84,10 @@ class TradingStrategy:
         atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
         current_price = self.data_1m['close'].iloc[-1]
         last_price = self.data_1m['close'].iloc[-2]
+        current_volume = self.data_1m['volume'].iloc[-1]
+        avg_volume = self.data_1m['volume'].tail(20).mean()
+        
+        volume_ok = current_volume > (avg_volume * 1.1)
 
         if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
             return "HOLD", 0
@@ -106,15 +110,17 @@ class TradingStrategy:
             if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
             if current_price < ema_20_1m: score += 1
             
-            if score >= 3:
-                body_size = abs(current_price - last_price)
-                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+            # 1. Checagem de Score e Volume
+            if score >= 3 and volume_ok:
                 
-                # 1. Filtro de Direção: Só compra se o preço atual for maior que o anterior (vela verde)
+                # 2. Filtro de Direção: Só compra se estiver SUBINDO (Vela Verde)
                 if current_price <= last_price:
                     return "HOLD", 0
 
-                # 2. Filtro de Exaustão: Evita comprar no topo de um esticada exagerada
+                # 3. Filtro de Exaustão
+                body_size = abs(current_price - last_price)
+                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+                
                 if body_size > (avg_body * 2.5): 
                     return "HOLD", 0
                 
@@ -126,13 +132,13 @@ class TradingStrategy:
             if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
             if current_price > ema_20_1m: score += 1
             
-            if score >= 3:
-                body_size = abs(current_price - last_price)
-                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-
+            if score >= 3 and volume_ok:
                 # 1. Filtro de Direção: Só vende se o preço atual for menor que o anterior (vela vermelha)
                 if current_price >= last_price:
                     return "HOLD", 0
+                
+                body_size = abs(current_price - last_price)
+                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
 
                 # 2. Filtro de Exaustão: Evita vender no fundo de um "crash" momentâneo
                 if body_size > (avg_body * 2.5):
