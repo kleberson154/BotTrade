@@ -17,6 +17,7 @@ class TradingStrategy:
         self.sl_price = 0
         self.tp_price = 0
         self.be_activated = False # Trava para não tentar mover o BE várias vezes
+        self.partial_taken = False # Nova trava para o lucro parcial
         
     def is_market_safe(self):
         agora = datetime.datetime.now()
@@ -48,6 +49,7 @@ class TradingStrategy:
         if not df.empty and candle_data['timestamp'] == df.iloc[-1]['timestamp']:
             idx = df.index[-1]
             df.at[idx, 'close'] = candle_data['close']
+            df.at[idx, 'volume'] = candle_data['volume']
             if candle_data['high'] > df.at[idx, 'high']: df.at[idx, 'high'] = candle_data['high']
             if candle_data['low'] < df.at[idx, 'low']: df.at[idx, 'low'] = candle_data['low']
         else:
@@ -150,7 +152,7 @@ class TradingStrategy:
         df_data = []
         for c in candles:
             df_data.append({
-                "high": float(c[2]), "low": float(c[3]), "close": float(c[4]), "timestamp": int(c[0])
+                "high": float(c[2]), "low": float(c[3]), "close": float(c[4]), "timestamp": int(c[0]), "volume": float(c[5])
             })
         new_df = pd.DataFrame(df_data)
         if timeframe_label == "1m": self.data_1m = new_df
@@ -166,6 +168,13 @@ class TradingStrategy:
         if atr <= 0: return None
 
         changed = False
+        
+        # --- LÓGICA DE TAKE PROFIT EM ESCADA (PARTIAL CLOSE) ---
+        # Alvo 1: 1.5% de lucro
+        if self.side == "BUY":
+            if not self.partial_taken and current_price >= self.entry_price * 1.015:
+                self.partial_taken = True
+                return "PARTIAL_EXIT" # Comando para o main.py
         
         # --- AJUSTE DE DISTÂNCIA ---
         # Aumentamos a folga do Trailing para 3.5x ATR
@@ -193,6 +202,10 @@ class TradingStrategy:
                     changed = True
 
         elif self.side == "SELL":
+            if not self.partial_taken and current_price <= self.entry_price * 0.985:
+                self.partial_taken = True
+                return "PARTIAL_EXIT"
+            
             # 1. BREAK-EVEN
             if not self.be_activated and current_price <= self.entry_price * 0.993:
                 new_sl = self.entry_price * 0.999 # Entrada - taxas

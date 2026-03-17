@@ -134,7 +134,6 @@ def handle_signal_logic(message):
     parts = topic.split('.')
     timeframe = parts[1] 
     symbol = parts[-1]
-    now_ts = time.time()
     
     candle = message["data"][0]
     current_price = float(candle["close"])
@@ -146,22 +145,57 @@ def handle_signal_logic(message):
         "close": current_price,
         "high": float(candle["high"]),
         "low": float(candle["low"]),
-        "timestamp": int(candle["start"])
+        "timestamp": int(candle["start"]),
+        "volume": float(candle["volume"])
     })
     
     if tf_key == "1m":
-        # 1. PROTEÇÃO (Usa dados locais, sem chamar API se não mudar nada)
+        # --- 1. PROTEÇÃO E REALIZAÇÃO PARCIAL ---
         if strat.is_positioned:
-            if strat.monitor_protection(current_price) == "UPDATE_SL":
+            status = strat.monitor_protection(current_price)
+            
+            # A) ATUALIZAÇÃO DE STOP LOSS (Trailing/BE)
+            if status == "UPDATE_SL":
                 try:
                     _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
                     session.set_trading_stop(
                         category="linear", symbol=symbol,
                         stopLoss=str(round(strat.sl_price, p_prec)), tpslMode="Full"
                     )
-                    notifier.send_message(f"🛡️ SL Atualizado ({symbol}) - SL: {strat.sl_price}")
+                    log.info(f"🛡️ SL Atualizado ({symbol}): {strat.sl_price}")
                 except Exception as e:
                     log.error(f"Erro ao atualizar Stop: {e}")
+
+            # B) REALIZAÇÃO PARCIAL (NOVO)
+            elif status == "PARTIAL_EXIT":
+                try:
+                    # Buscamos a posição real na Bybit para saber o tamanho exato
+                    pos_resp = session.get_positions(category="linear", symbol=symbol)
+                    if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
+                        pos = pos_resp['result']['list'][0]
+                        current_qty = float(pos.get('size', 0))
+                        
+                        if current_qty > 0:
+                            # Calculamos 50% e aplicamos a precisão correta da moeda
+                            q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+                            half_qty = current_qty / 2
+                            qty_str = str(int(half_qty)) if q_prec == 0 else str(round(half_qty, q_prec))
+                            
+                            side_exit = "Sell" if strat.side == "BUY" else "Buy"
+                            
+                            order = session.place_order(
+                                category="linear", symbol=symbol, side=side_exit,
+                                orderType="Market", qty=qty_str, reduceOnly=True
+                            )
+                            
+                            if order['retCode'] == 0:
+                                msg = f"💰 *PARTIAL TP:* {symbol}\nFechado: {qty_str} (50%)"
+                                notifier.send_message(msg)
+                                log.info(msg)
+                            else:
+                                log.error(f"Erro no Parcial Bybit: {order['retMsg']}")
+                except Exception as e:
+                    log.error(f"Erro crítico no processamento do parcial: {e}")
         
         # 2. VERIFICAÇÃO DE SINAL
         signal, current_atr = strat.check_signal()
