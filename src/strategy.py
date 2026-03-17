@@ -111,7 +111,7 @@ class TradingStrategy:
             if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1 # Cruzamento de alta
             if current_price < ema_20_1m: score += 1  # Pullback (preço "barato" em relação à média curta)
             
-            if score >= 2: 
+            if score >= 3: 
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
@@ -121,7 +121,7 @@ class TradingStrategy:
             if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1 # Cruzamento de baixa
             if current_price > ema_20_1m: score += 1  # Pullback (preço "caro" em relação à média curta)
             
-            if score >= 2: 
+            if score >= 3: 
                 return "SELL", atr
             
         return "HOLD", 0

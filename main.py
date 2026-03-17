@@ -260,7 +260,7 @@ while True:
         # HEARTBEAT & CACHE REFRESH (30 seg para cache, 30 min para telegram)
         get_cached_data()
 
-        if timestamp_atual - ULTIMO_CHECK_VIVO >= 1800:
+        if timestamp_atual - ULTIMO_CHECK_VIVO >= 300:
             if SALDO_INICIAL_DIA is None: SALDO_INICIAL_DIA = cache_balance['total']
             pnl_dia = cache_balance['total'] - SALDO_INICIAL_DIA
             
