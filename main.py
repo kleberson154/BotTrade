@@ -53,7 +53,7 @@ def get_cached_data(force=False):
     global cache_balance, cache_positions
     now = time.time()
     
-    if force or (now - cache_balance['last_update'] > 30):
+    if force or (now - cache_balance['last_update'] > 10):
         try:
             # 1. Busca Saldo
             b_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")

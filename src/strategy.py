@@ -118,7 +118,7 @@ class TradingStrategy:
                 if rsi_1m > self.calculate_rsi(self.data_1m, 14).iloc[-2]: score += 1
 
             if score >= 3:
-                print(f"✅ SINAL DE COMPRA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
+                print(f"✅ SINAL DE COMPRA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | Score: {score} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
@@ -136,7 +136,7 @@ class TradingStrategy:
                 if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
 
             if score >= 3:
-                print(f"✅ SINAL DE VENDA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
+                print(f"✅ SINAL DE VENDA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | Score: {score} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
                 return "SELL", atr
             
         return "HOLD", 0
