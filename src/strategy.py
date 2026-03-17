@@ -155,7 +155,6 @@ class TradingStrategy:
         if not self.is_positioned:
             return None
 
-        # Usamos o ATR para calcular a distância do Trailing
         atr_series = self.calculate_atr(self.data_1m, 14)
         if len(atr_series) < 1: return None
         atr = atr_series.iloc[-1]
@@ -163,37 +162,43 @@ class TradingStrategy:
 
         changed = False
         
+        # --- AJUSTE DE DISTÂNCIA ---
+        # Como o SL inicial é 2.5x ATR, o Trailing deve ser levemente maior 
+        # ou igual para dar espaço ao lucro crescer.
+        trail_dist = atr * 2.8 
+
         if self.side == "BUY":
-            # 1. BREAK-EVEN: Se lucrar 0.5%, move o SL para Entrada + 0.1% (taxas)
-            if not self.be_activated and current_price >= self.entry_price * 1.005:
-                new_sl = self.entry_price * 1.001 
+            # 1. BREAK-EVEN (Proteção rápida)
+            # Movemos para o zero a zero apenas quando atingir 0.7% de lucro
+            # Isso evita ser estopado na entrada por qualquer oscilação boba.
+            if not self.be_activated and current_price >= self.entry_price * 1.007:
+                new_sl = self.entry_price * 1.001 # Entrada + taxas
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    log.info(f"🛡️ {self.symbol} - GATILHO: Break-even ativado.")
+                    log.info(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
-            # 2. TRAILING STOP: Mantém o SL a 2x ATR de distância do topo
-            # Só sobe o SL, nunca desce.
-            trail_sl = current_price - (atr * 2.0)
+            # 2. TRAILING STOP (Seguindo o lucro)
+            trail_sl = current_price - trail_dist
             if trail_sl > self.sl_price:
-                # Evita micro-ajustes para não sobrecarregar a API
+                # Só atualiza se a subida for relevante (> 0.1%) para poupar a API
                 if (trail_sl - self.sl_price) / self.sl_price > 0.001: 
                     self.sl_price = trail_sl
                     changed = True
 
         elif self.side == "SELL":
-            # 1. BREAK-EVEN: Se cair 0.5%, move o SL para Entrada - 0.1%
-            if not self.be_activated and current_price <= self.entry_price * 0.995:
-                new_sl = self.entry_price * 0.999
+            # 1. BREAK-EVEN
+            if not self.be_activated and current_price <= self.entry_price * 0.993:
+                new_sl = self.entry_price * 0.999 # Entrada - taxas
                 if new_sl < self.sl_price or self.sl_price == 0:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    log.info(f"🛡️ {self.symbol} - GATILHO: Break-even ativado.")
+                    log.info(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
-            # 2. TRAILING STOP: Mantém o SL a 2x ATR acima do fundo
-            trail_sl = current_price + (atr * 2.0)
+            # 2. TRAILING STOP
+            trail_sl = current_price + trail_dist
             if trail_sl < self.sl_price or self.sl_price == 0:
                 if (self.sl_price - trail_sl) / trail_sl > 0.001:
                     self.sl_price = trail_sl
