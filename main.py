@@ -222,6 +222,14 @@ def process_queue():
 
 def on_message(message):
     if "data" in message:
+        # Se a fila passar de 50 mensagens, removemos a mais antiga antes de por a nova
+        # Isso garante que o bot nunca opere com preço "atrasado"
+        if message_queue.qsize() > 50:
+            try:
+                message_queue.get_nowait()
+                message_queue.task_done()
+            except:
+                pass
         message_queue.put(message)
 
 def subscribe_market_streams(ws_client):

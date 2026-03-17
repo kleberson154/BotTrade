@@ -1,6 +1,6 @@
 class RiskManager:
     def __init__(self):
-        self.max_positions = 4 
+        self.max_positions = 3 
         self.risk_per_trade_pct = 0.2 # 20% do saldo por trade 
         
         self.PRECISION_MAP = {
