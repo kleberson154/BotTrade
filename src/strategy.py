@@ -207,12 +207,20 @@ class TradingStrategy:
         return "UPDATE_SL" if changed else None
     
     def sync_position(self, side, entry_price, sl_price, tp_price):
+        # Função auxiliar para evitar o erro de string vazia
+        def safe_float(val):
+            try:
+                return float(val) if val and str(val).strip() != "" else 0.0
+            except:
+                return 0.0
+
         self.is_positioned = True
         self.side = "BUY" if side == "Buy" else "SELL"
-        self.entry_price = float(entry_price)
-        self.sl_price = float(sl_price)
-        self.tp_price = float(tp_price)
+        self.entry_price = safe_float(entry_price)
+        self.sl_price = safe_float(sl_price)
+        self.tp_price = safe_float(tp_price)
+        
         # Se o SL já estiver no preço de entrada ou melhor, ativa o BE
-        if (self.side == "BUY" and self.sl_price >= self.entry_price) or \
-           (self.side == "SELL" and self.sl_price <= self.entry_price):
+        if (self.side == "BUY" and self.sl_price >= self.entry_price and self.entry_price > 0) or \
+           (self.side == "SELL" and self.sl_price <= self.entry_price and self.entry_price > 0):
             self.be_activated = True
