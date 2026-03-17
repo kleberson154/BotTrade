@@ -47,18 +47,26 @@ ULTIMO_CHECK_VIVO = 0
 SALDO_INICIAL_DIA = None
 
 def get_cached_data(force=False):
-    """Atualiza saldo e posições apenas uma vez a cada 30 segundos ou sob demanda"""
+    """Atualiza saldo e posições com tratamento para strings vazias"""
     global cache_balance, cache_positions
     now = time.time()
     
     if force or (now - cache_balance['last_update'] > 30):
         try:
-            # Busca Saldo
+            # 1. Busca Saldo
             b_resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
             if b_resp['retCode'] == 0:
                 coin = b_resp['result']['list'][0]['coin'][0]
-                total = float(coin.get('walletBalance', 0))
-                avail = float(coin.get('availableToWithdraw', 0))
+                
+                # Tratamento seguro para conversão de string/None para float
+                def safe_float(val):
+                    try:
+                        return float(val) if val and str(val).strip() != "" else 0.0
+                    except:
+                        return 0.0
+
+                total = safe_float(coin.get('walletBalance'))
+                avail = safe_float(coin.get('availableToWithdraw'))
                 
                 # Correção para cache da conta Demo
                 calc_avail = avail if avail > 0 else (total * 0.95)
@@ -69,16 +77,23 @@ def get_cached_data(force=False):
                     "last_update": now
                 }
             
-            # Busca Posições
+            # 2. Busca Posições
             p_resp = session.get_positions(category="linear", settleCoin="USDT")
             if p_resp['retCode'] == 0:
+                # Filtra apenas posições que realmente têm tamanho (size)
+                active_pos = []
+                for p in p_resp['result']['list']:
+                    p_size = safe_float(p.get('size'))
+                    if p_size != 0:
+                        active_pos.append(p)
+
                 cache_positions = {
-                    "data": [p for p in p_resp['result']['list'] if float(p['size']) != 0],
+                    "data": active_pos,
                     "last_update": now
                 }
                 
-                # Sincroniza o estado interno das estratégias com a realidade
-                active_symbols = [p['symbol'] for p in cache_positions['data']]
+                # Sincroniza estado das estratégias
+                active_symbols = [p['symbol'] for p in active_pos]
                 for s in strategies:
                     if s not in active_symbols:
                         strategies[s].is_positioned = False
@@ -239,6 +254,7 @@ ws = create_and_subscribe_websocket()
 while True:
     try:
         timestamp_atual = time.time()
+        notifier.send_message("🤖 Bot Ativo - Monitorando sinais e posições...")
         
         # HEARTBEAT & CACHE REFRESH (30 seg para cache, 30 min para telegram)
         get_cached_data()
