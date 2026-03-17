@@ -46,6 +46,8 @@ cache_positions = {"data": [], "last_update": 0}
 ULTIMO_CHECK_VIVO = 0 
 SALDO_INICIAL_DIA = None
 
+notifier.send_message("🤖 Bot Ativo - Monitorando sinais e posições...")
+
 def get_cached_data(force=False):
     """Atualiza saldo e posições com tratamento para strings vazias"""
     global cache_balance, cache_positions
@@ -254,7 +256,6 @@ ws = create_and_subscribe_websocket()
 while True:
     try:
         timestamp_atual = time.time()
-        notifier.send_message("🤖 Bot Ativo - Monitorando sinais e posições...")
         
         # HEARTBEAT & CACHE REFRESH (30 seg para cache, 30 min para telegram)
         get_cached_data()
