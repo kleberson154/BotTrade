@@ -22,8 +22,8 @@ class RiskManager:
             ideal_leverage = 0.04 / price_variation
             
             # --- NOVA DINÂMICA DE ALAVANCAGEM ---
-            # Mínimo de 5x, máximo de 15x (para não ser liquidado rápido com $13)
-            leverage = int(min(max(ideal_leverage, 5), 15))
+            # Mínimo de 10x, máximo de 15x (para não ser liquidado rápido com $13)
+            leverage = int(min(max(ideal_leverage, 10), 15))
 
             # 3. Cálculo do Tamanho da Posição (Quantity)
             # Com $13, precisamos de ordens que valham pelo menos $40~50 nominais (Margin * Leverage)
@@ -38,7 +38,7 @@ class RiskManager:
             return leverage, qty
         except Exception as e:
             log.error(f"Erro no cálculo de risco: {e}")
-            return 5, 0
+            return 10, 0
 
     def get_sl_tp_adaptive(self, symbol, side, current_price, current_atr):
         _, p_prec = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
