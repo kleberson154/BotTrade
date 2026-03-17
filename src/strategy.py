@@ -106,7 +106,7 @@ class TradingStrategy:
             if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
             if current_price < ema_20_1m: score += 1
             
-            if score >= 3 and current_price > last_price:
+            if score >= 3: # and current_price > last_price:
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
@@ -115,7 +115,7 @@ class TradingStrategy:
             if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
             if current_price > ema_20_1m: score += 1
             
-            if score >= 3 and current_price < last_price:
+            if score >= 3: # and current_price < last_price:
                 return "SELL", atr
             
         return "HOLD", 0
