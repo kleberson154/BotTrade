@@ -195,7 +195,14 @@ def handle_signal_logic(message):
                     log.error(f"Erro no parcial: {e}")
         
         # 2. VERIFICAÇÃO DE SINAL
-        signal, current_atr = strat.check_signal()
+        result = strat.check_signal()
+        
+        # Verifica se o retorno é uma tupla antes de desempacotar
+        if isinstance(result, tuple):
+            signal, current_atr = result
+        else:
+            signal, current_atr = "HOLD", 0
+            
         if signal in ["BUY", "SELL"]:
             current_minute = datetime.now().minute
             if hasattr(strat, 'last_signal_min') and strat.last_signal_min == current_minute:
