@@ -1,7 +1,7 @@
 class RiskManager:
     def __init__(self):
-        self.max_positions = 2 # Reduzi para 2 para não dividir demais seus R$ 100
-        self.risk_per_trade_pct = 0.015 # 1.5% de risco (mais conservador para banca pequena)
+        self.max_positions = 3 
+        self.risk_per_trade_pct = 0.015 # 1.5%
         
         self.PRECISION_MAP = {
             "BTCUSDT": (3, 2), "ETHUSDT": (2, 2), "SOLUSDT": (1, 3),
@@ -12,20 +12,16 @@ class RiskManager:
     def get_dynamic_risk_params(self, current_price, sl_price, balance):
         try:
             price_variation = abs(current_price - sl_price) / current_price
-            if price_variation < 0.005: price_variation = 0.005 # SL mínimo de 0.5%
+            # Aumentei a variação mínima para 0.8% para evitar alavancagem explosiva
+            if price_variation < 0.008: price_variation = 0.008 
 
-            # Alavancagem
             ideal_leverage = self.risk_per_trade_pct / price_variation
-            leverage = min(max(int(ideal_leverage), 1), 20) 
+            leverage = min(max(int(ideal_leverage), 1), 10) # Limite de 10x para preservar margem
 
-            # CÁLCULO DE QTY PARA BANCA PEQUENA (R$ 100)
-            # Vamos limitar a posição nominal a no máximo 50% do saldo total por trade
-            # para garantir que a margem sempre exista.
-            max_pos_nominal = balance * 0.5 * leverage 
+            # Segurança: Posição nominal total não deve exceder 40% do saldo (mais conservador)
+            max_pos_nominal = balance * 0.4 * leverage 
             
             qty_usdt = (balance * self.risk_per_trade_pct) / price_variation
-            
-            # Escolhe o menor entre o risco calculado e o limite de segurança
             qty_usdt = min(qty_usdt, max_pos_nominal)
             qty = qty_usdt / current_price
 
@@ -36,12 +32,17 @@ class RiskManager:
     def get_sl_tp_adaptive(self, symbol, side, current_price, current_atr):
         _, p_prec = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
         
-        # Reduzi os alvos para banca pequena (SL mais curto = Menos margem presa)
-        max_atr = current_price * 0.01 
-        safe_atr = min(current_atr, max_atr)
+        # --- AJUSTE CRÍTICO: DISTÂNCIA DO STOP ---
+        # 1.2 era muito curto. Aumentamos para 2.5 para sobreviver ao ruído.
+        dist_sl = current_atr * 2.5
+        
+        # Take Profit maior para manter o Risk:Reward favorável (1:1.5 ou mais)
+        dist_tp = current_atr * 4.0
 
-        dist_sl = safe_atr * 1.2
-        dist_tp = safe_atr * 2.5
+        # Filtro de segurança: O Stop não pode ser menor que 0.6% nem maior que 3%
+        min_sl = current_price * 0.006
+        max_sl = current_price * 0.03
+        dist_sl = max(min(dist_sl, max_sl), min_sl)
 
         if side == "Buy":
             sl = current_price - dist_sl

@@ -77,51 +77,66 @@ class TradingStrategy:
 
     def check_signal(self):
         # 1. Filtros de Segurança Básicos
-        # Garantimos que existam dados suficientes para os indicadores (EMA 200 precisa de 200 candles)
         if len(self.data_1m) < 35 or len(self.data_15m) < 200:
             return "HOLD", 0
         
-        # 2. Cálculo de Volatilidade (ATR)
+        # 2. Dados Atuais
         atr_series = self.calculate_atr(self.data_1m, 14)
         atr = atr_series.iloc[-1]
         current_price = self.data_1m['close'].iloc[-1]
+        last_price = self.data_1m['close'].iloc[-2]
 
-        # Evita operar se o ATR falhar ou se o mercado estiver "morto"
         if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
             return "HOLD", 0
 
-        # 3. Tendência Macro (EMA 200 no 15m)
+        # 3. Indicadores
         ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
-        
-        # 4. Indicadores para Votação (no 1m)
+        ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
         rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
         macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
-        ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
-
-        # Verificação anti-erro para MACD (garante que temos valores válidos)
+        
         if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
             return "HOLD", 0
 
         score = 0
         
         # --- LÓGICA DE COMPRA (LONG) ---
-        # Tendência de alta no 15m
-        if current_price > ema_200_15m:
-            if rsi_1m < 40: score += 1                # RSI em zona de sobrevenda ou neutra-baixa
-            if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1 # Cruzamento de alta
-            if current_price < ema_20_1m: score += 1  # Pullback (preço "barato" em relação à média curta)
+        # Só compra se: Tendência macro é ALTA (15m) E o preço mostrou reação (fechou acima do anterior)
+        if current_price > ema_200_15m and current_price > last_price:
             
-            if score >= 3: 
+            # Condição Obrigatória: Preço acima da média curta (estamos em momentum de alta)
+            if current_price > ema_20_1m:
+                score += 1
+                
+                # RSI não pode estar em sobrecompra extrema (> 70)
+                if 40 <= rsi_1m <= 70: score += 1
+                
+                # Cruzamento MACD
+                if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
+                
+                # Volume/Força: Se o RSI estiver subindo em relação ao candle anterior
+                if rsi_1m > self.calculate_rsi(self.data_1m, 14).iloc[-2]: score += 1
+
+            if score >= 3:
+                print(f"✅ SINAL DE COMPRA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
-        # Tendência de baixa no 15m
-        elif current_price < ema_200_15m:
-            if rsi_1m > 60: score += 1                # RSI em zona de sobrecompra ou neutra-alta
-            if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1 # Cruzamento de baixa
-            if current_price > ema_20_1m: score += 1  # Pullback (preço "caro" em relação à média curta)
+        # Só vende se: Tendência macro é BAIXA (15m) E o preço mostrou queda (fechou abaixo do anterior)
+        elif current_price < ema_200_15m and current_price < last_price:
             
-            if score >= 3: 
+            # Condição Obrigatória: Preço abaixo da média curta (momentum de baixa)
+            if current_price < ema_20_1m:
+                score += 1
+                
+                # RSI não pode estar em sobrevenda extrema (< 30)
+                if 30 <= rsi_1m <= 60: score += 1
+                
+                # Cruzamento MACD
+                if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
+
+            if score >= 3:
+                print(f"✅ SINAL DE VENDA DETECTADO - {self.symbol} | Preço: {current_price:.2f} | ATR: {atr:.4f} | RSI: {rsi_1m:.2f}")
                 return "SELL", atr
             
         return "HOLD", 0
