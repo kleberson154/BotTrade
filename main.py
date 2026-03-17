@@ -32,12 +32,12 @@ IS_DEMO = _mode == "demo"
 SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
 
 # --- INICIALIZAÇÃO DE COMPONENTES ---
+notifier = TelegramNotifier()
 log = setup_logger()
-strategies = {symbol: TradingStrategy(symbol=symbol) for symbol in SYMBOLS}
+strategies = {symbol: TradingStrategy(symbol=symbol, notifier=notifier) for symbol in SYMBOLS}
 risk_mgr = RiskManager()
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
 executor = ExecutionManager(session)
-notifier = TelegramNotifier()
 message_queue = Queue()
 
 # --- GESTÃO DE CACHE (CRÍTICO PARA PERFORMANCE) ---

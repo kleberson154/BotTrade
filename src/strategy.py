@@ -3,8 +3,9 @@ import numpy as np
 import datetime
 
 class TradingStrategy:
-    def __init__(self, symbol):
+    def __init__(self, symbol, notifier):
         self.symbol = symbol
+        self.notifier = notifier
         self.data_1m = pd.DataFrame()
         self.data_15m = pd.DataFrame()
         self.min_atr_threshold = 0.0002 # Filtro de 0.02% de volatilidade mínima
@@ -71,18 +72,16 @@ class TradingStrategy:
         exp2 = df['close'].ewm(span=slow, adjust=False).mean()
         macd_line = exp1 - exp2
         signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-        # Dentro do calculate_macd
-        histogram = macd_line - signal_line
+        histogram = macd_line - signal_line 
         return macd_line, signal_line, histogram
 
     def check_signal(self):
         # 1. Filtros de Segurança Básicos
-        if len(self.data_1m) < 35 or len(self.data_15m) < 200:
+        if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
             return "HOLD", 0
         
         # 2. Dados Atuais
-        atr_series = self.calculate_atr(self.data_1m, 14)
-        atr = atr_series.iloc[-1]
+        atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
         current_price = self.data_1m['close'].iloc[-1]
         last_price = self.data_1m['close'].iloc[-2]
 
@@ -93,6 +92,7 @@ class TradingStrategy:
         ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
         ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
         rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
+        
         macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
         
         if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
@@ -101,40 +101,21 @@ class TradingStrategy:
         score = 0
         
         # --- LÓGICA DE COMPRA (LONG) ---
-        # Só compra se: Tendência macro é ALTA (15m) E o preço mostrou reação (fechou acima do anterior)
-        if current_price > ema_200_15m and current_price > last_price:
+        if current_price > ema_200_15m:
+            if rsi_1m < 45: score += 1
+            if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
+            if current_price < ema_20_1m: score += 1
             
-            # Condição Obrigatória: Preço acima da média curta (estamos em momentum de alta)
-            if current_price > ema_20_1m:
-                score += 1
-                
-                # RSI não pode estar em sobrecompra extrema (> 70)
-                if 40 <= rsi_1m <= 70: score += 1
-                
-                # Cruzamento MACD
-                if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
-                
-                # Volume/Força: Se o RSI estiver subindo em relação ao candle anterior
-                if rsi_1m > self.calculate_rsi(self.data_1m, 14).iloc[-2]: score += 1
-
-            if score >= 3:
+            if score >= 3 and current_price > last_price:
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
-        # Só vende se: Tendência macro é BAIXA (15m) E o preço mostrou queda (fechou abaixo do anterior)
-        elif current_price < ema_200_15m and current_price < last_price:
+        elif current_price < ema_200_15m:
+            if rsi_1m > 55: score += 1
+            if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
+            if current_price > ema_20_1m: score += 1
             
-            # Condição Obrigatória: Preço abaixo da média curta (momentum de baixa)
-            if current_price < ema_20_1m:
-                score += 1
-                
-                # RSI não pode estar em sobrevenda extrema (< 30)
-                if 30 <= rsi_1m <= 60: score += 1
-                
-                # Cruzamento MACD
-                if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
-
-            if score >= 3:
+            if score >= 3 and current_price < last_price:
                 return "SELL", atr
             
         return "HOLD", 0
@@ -175,7 +156,7 @@ class TradingStrategy:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
             # 2. TRAILING STOP (Seguindo o lucro)
             trail_sl = current_price - trail_dist
@@ -193,7 +174,7 @@ class TradingStrategy:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
             # 2. TRAILING STOP
             trail_sl = current_price + trail_dist
