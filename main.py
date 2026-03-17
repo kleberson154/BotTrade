@@ -159,7 +159,7 @@ def handle_signal_logic(message):
                         category="linear", symbol=symbol,
                         stopLoss=str(round(strat.sl_price, p_prec)), tpslMode="Full"
                     )
-                    log.info(f"🛡️ SL Atualizado ({symbol}): {strat.sl_price}")
+                    notifier.send_message(f"🛡️ SL Atualizado ({symbol}) - SL: {strat.sl_price}")
                 except Exception as e:
                     log.error(f"Erro ao atualizar Stop: {e}")
         
@@ -268,7 +268,7 @@ while True:
         # HEARTBEAT & CACHE REFRESH (30 seg para cache, 30 min para telegram)
         get_cached_data()
 
-        if timestamp_atual - ULTIMO_CHECK_VIVO >= 300:
+        if timestamp_atual - ULTIMO_CHECK_VIVO >= 900:
             if SALDO_INICIAL_DIA is None: SALDO_INICIAL_DIA = cache_balance['total']
             pnl_dia = cache_balance['total'] - SALDO_INICIAL_DIA
             

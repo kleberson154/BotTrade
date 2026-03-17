@@ -175,7 +175,7 @@ class TradingStrategy:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    log.info(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
+                    notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
             # 2. TRAILING STOP (Seguindo o lucro)
             trail_sl = current_price - trail_dist
@@ -193,7 +193,7 @@ class TradingStrategy:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    log.info(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
+                    notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
 
             # 2. TRAILING STOP
             trail_sl = current_price + trail_dist
