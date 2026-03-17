@@ -44,16 +44,21 @@ class RiskManager:
         _, p_prec = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
         
         # --- AJUSTE CRÍTICO: DISTÂNCIA DO STOP ---
-        # 1.2 era muito curto. Aumentamos para 2.5 para sobreviver ao ruído.
-        dist_sl = current_atr * 2.5
+        # 1. Aumentamos o multiplicador do ATR para dar mais folga (de 2.5 para 3.0)
+        dist_sl = current_atr * 3.0
         
-        # Take Profit maior para manter o Risk:Reward favorável (1:1.5 ou mais)
-        dist_tp = current_atr * 4.0
+        # 2. Definimos um Take Profit mais longo para compensar o stop maior
+        dist_tp = current_atr * 5.5
 
-        # Filtro de segurança: O Stop não pode ser menor que 0.6% nem maior que 3%
-        min_sl = current_price * 0.006
-        max_sl = current_price * 0.03
+        # 0.006 (0.6%) era muito pouco. Subimos para 0.015 (1.5%) como o MÍNIMO absoluto.
+        # Assim, mesmo que o mercado esteja parado, o bot deixará 1.5% de espaço.
+        min_sl = current_price * 0.015 
+        max_sl = current_price * 0.04   # Máximo de 4% para não queimar a banca
+        
         dist_sl = max(min(dist_sl, max_sl), min_sl)
+        
+        # Garante que o TP seja pelo menos 2x o tamanho do SL (Risk:Reward de 1:2)
+        dist_tp = max(dist_tp, dist_sl * 2.0)
 
         if side == "Buy":
             sl = current_price - dist_sl

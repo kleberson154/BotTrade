@@ -142,16 +142,16 @@ class TradingStrategy:
         changed = False
         
         # --- AJUSTE DE DISTÂNCIA ---
-        # Como o SL inicial é 2.5x ATR, o Trailing deve ser levemente maior 
-        # ou igual para dar espaço ao lucro crescer.
-        trail_dist = atr * 2.8 
+        # Aumentamos a folga do Trailing para 3.5x ATR
+        # Assim ele só sobe o SL quando o lucro for realmente expressivo
+        trail_dist = atr * 3.5
 
         if self.side == "BUY":
             # 1. BREAK-EVEN (Proteção rápida)
             # Movemos para o zero a zero apenas quando atingir 0.7% de lucro
             # Isso evita ser estopado na entrada por qualquer oscilação boba.
-            if not self.be_activated and current_price >= self.entry_price * 1.007:
-                new_sl = self.entry_price * 1.001 # Entrada + taxas
+            if not self.be_activated and current_price >= self.entry_price * 1.012:
+                new_sl = self.entry_price * 1.002 # Entrada + taxas
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
