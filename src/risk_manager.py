@@ -1,7 +1,7 @@
 class RiskManager:
     def __init__(self):
-        self.max_positions = 1 
-        self.risk_per_trade_pct = 0.05 # 5% do saldo por trade 
+        self.max_positions = 4 
+        self.risk_per_trade_pct = 0.2 # 20% do saldo por trade 
         
         self.PRECISION_MAP = {
             "BTCUSDT": (3, 2), "ETHUSDT": (2, 2), "SOLUSDT": (1, 3),
