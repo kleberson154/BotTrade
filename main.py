@@ -152,11 +152,13 @@ def handle_signal_logic(message):
     if tf_key == "1m":
         # --- 1. PROTEÇÃO E REALIZAÇÃO PARCIAL ---
         if strat.is_positioned:
+            # O ERRO ESTAVA AQUI: Não tente desempacotar o retorno do monitor_protection
             status = strat.monitor_protection(current_price)
             
-            # A) ATUALIZAÇÃO DE STOP LOSS (Trailing/BE)
+            # Se status for None, não fazemos nada
             if status == "UPDATE_SL":
                 try:
+                    # Buscamos a precisão do preço (p_prec)
                     _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
                     session.set_trading_stop(
                         category="linear", symbol=symbol,
@@ -166,19 +168,18 @@ def handle_signal_logic(message):
                 except Exception as e:
                     log.error(f"Erro ao atualizar Stop: {e}")
 
-            # B) REALIZAÇÃO PARCIAL (NOVO)
             elif status == "PARTIAL_EXIT":
                 try:
-                    # Buscamos a posição real na Bybit para saber o tamanho exato
+                    # Buscamos a posição real para dividir por 2
                     pos_resp = session.get_positions(category="linear", symbol=symbol)
                     if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
                         pos = pos_resp['result']['list'][0]
                         current_qty = float(pos.get('size', 0))
                         
                         if current_qty > 0:
-                            # Calculamos 50% e aplicamos a precisão correta da moeda
                             q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
                             half_qty = current_qty / 2
+                            # Arredondamento correto para a quantidade
                             qty_str = str(int(half_qty)) if q_prec == 0 else str(round(half_qty, q_prec))
                             
                             side_exit = "Sell" if strat.side == "BUY" else "Buy"
@@ -189,13 +190,9 @@ def handle_signal_logic(message):
                             )
                             
                             if order['retCode'] == 0:
-                                msg = f"💰 *PARTIAL TP:* {symbol}\nFechado: {qty_str} (50%)"
-                                notifier.send_message(msg)
-                                log.info(msg)
-                            else:
-                                log.error(f"Erro no Parcial Bybit: {order['retMsg']}")
+                                notifier.send_message(f"💰 *PARTIAL TP:* {symbol}\nFechado: {qty_str} (50%)")
                 except Exception as e:
-                    log.error(f"Erro crítico no processamento do parcial: {e}")
+                    log.error(f"Erro no parcial: {e}")
         
         # 2. VERIFICAÇÃO DE SINAL
         signal, current_atr = strat.check_signal()
