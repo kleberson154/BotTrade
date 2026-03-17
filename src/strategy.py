@@ -106,7 +106,18 @@ class TradingStrategy:
             if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
             if current_price < ema_20_1m: score += 1
             
-            if score >= 3: # and current_price > last_price:
+            if score >= 3:
+                body_size = abs(current_price - last_price)
+                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+                
+                # 1. Filtro de Direção: Só compra se o preço atual for maior que o anterior (vela verde)
+                if current_price <= last_price:
+                    return "HOLD", 0
+
+                # 2. Filtro de Exaustão: Evita comprar no topo de um esticada exagerada
+                if body_size > (avg_body * 2.5): 
+                    return "HOLD", 0
+                
                 return "BUY", atr
 
         # --- LÓGICA DE VENDA (SHORT) ---
@@ -115,10 +126,19 @@ class TradingStrategy:
             if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
             if current_price > ema_20_1m: score += 1
             
-            if score >= 3: # and current_price < last_price:
+            if score >= 3:
+                body_size = abs(current_price - last_price)
+                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+
+                # 1. Filtro de Direção: Só vende se o preço atual for menor que o anterior (vela vermelha)
+                if current_price >= last_price:
+                    return "HOLD", 0
+
+                # 2. Filtro de Exaustão: Evita vender no fundo de um "crash" momentâneo
+                if body_size > (avg_body * 2.5):
+                    return "HOLD", 0
+
                 return "SELL", atr
-            
-        return "HOLD", 0
     
     def load_historical_data(self, timeframe_label, candles):
         df_data = []
