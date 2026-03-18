@@ -98,8 +98,8 @@ class RiskManager:
         price = float(current_price)
         
         # Distâncias baseadas no ATR (Volatilidade atual)
-        sl_distance = atr * 2.5
-        tp_distance = atr * 5.5
+        sl_distance = atr * 3.5
+        tp_distance = atr * 6.0
         
         # --- TRAVA ANTI-LIQUIDAÇÃO ---
         # Garante que o Stop Loss esteja sempre antes de 70% da margem de liquidação

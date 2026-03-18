@@ -133,7 +133,7 @@ def execute_partial_tp(symbol, strat, current_price):
         pos_resp = session.get_positions(category="linear", symbol=symbol)
         if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
             pos = pos_resp['result']['list'][0]
-            current_qty = float(pos.get('size', 0))
+            current_qty = abs(float(pos.get('size', 0)))
             if current_qty > 0:
                 q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
                 qty_to_close = str(round(current_qty / 2, q_prec))
@@ -141,10 +141,11 @@ def execute_partial_tp(symbol, strat, current_price):
                 side_exit = "Sell" if strat.side == "BUY" else "Buy"
                 session.place_order(
                     category="linear", symbol=symbol, side=side_exit,
-                    orderType="Market", qty=qty_to_close, reduceOnly=True
+                    orderType="Market", qty=str(qty_to_close), reduceOnly=True
                 )
                 strat.partial_taken = True
                 notifier.send_message(f"💰 *Partial TP:* {symbol} (50% fechado)")
+                log.info(f"DEBUG: Pos total: {current_qty} | Fechando: {qty_to_close}")
                 
                 pnl_estimado = (abs(strat.entry_price - current_price) / strat.entry_price) * (float(qty_to_close) * strat.entry_price)
                 risk_mgr.update_dashboard(symbol, pnl_estimado)
