@@ -3,6 +3,9 @@ import numpy as np
 import datetime
 
 class TradingStrategy:
+    # =========================================================
+    # 1. INICIALIZAÇÃO E CONFIGURAÇÃO
+    # =========================================================
     def __init__(self, symbol, notifier):
         self.symbol = symbol
         self.notifier = notifier
@@ -10,54 +13,178 @@ class TradingStrategy:
         self.data_15m = pd.DataFrame()
         self.min_atr_threshold = 0.0002 # Filtro de 0.02% de volatilidade mínima
         
-        # --- NOVAS VARIÁVEIS DE CONTROLE ---
+        # Variáveis de Controle de Posição
         self.is_positioned = False
         self.side = None  # "BUY" ou "SELL"
         self.entry_price = 0
         self.sl_price = 0
         self.tp_price = 0
-        self.be_activated = False # Trava para não tentar mover o BE várias vezes
-        self.partial_taken = False # Nova trava para o lucro parcial
-        
+        self.be_activated = False 
+        self.partial_taken = False 
+
+    # =========================================================
+    # 2. LÓGICA DE SINAL (ESTRATÉGIA)
+    # =========================================================
+    def check_signal(self):
+        """Analisa indicadores e retorna (Sinal, ATR)"""
+        try:
+            # 1. Filtros de Segurança Básicos
+            if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
+                return "HOLD", 0
+            
+            # 2. Cálculo de ATR e Volume
+            atr_series = self.calculate_atr(self.data_1m, 14)
+            if len(atr_series) == 0: return "HOLD", 0
+            
+            atr = atr_series.iloc[-1]
+            current_price = self.data_1m['close'].iloc[-1]
+            last_price = self.data_1m['close'].iloc[-2]
+            current_volume = self.data_1m['volume'].iloc[-1]
+            avg_volume = self.data_1m['volume'].tail(20).mean()
+            
+            volume_ok = current_volume > (avg_volume * 1.1)
+
+            if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
+                return "HOLD", 0
+
+            # 3. Indicadores Técnicos
+            ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
+            ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
+            rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
+            macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
+            
+            if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
+                return "HOLD", 0
+
+            score = 0
+            
+            # --- LÓGICA DE COMPRA (LONG) ---
+            if current_price > ema_200_15m:
+                if rsi_1m < 45: score += 1
+                if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
+                if current_price < ema_20_1m: score += 1
+                
+                if score >= 3 and volume_ok:
+                    # Filtros de Direção e Exaustão
+                    if current_price <= last_price: return "HOLD", 0
+                    
+                    body_size = abs(current_price - last_price)
+                    avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+                    if body_size > (avg_body * 2.5): return "HOLD", 0
+                    
+                    return "BUY", atr
+
+            # --- LÓGICA DE VENDA (SHORT) ---
+            elif current_price < ema_200_15m:
+                if rsi_1m > 55: score += 1
+                if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
+                if current_price > ema_20_1m: score += 1
+                
+                if score >= 3 and volume_ok:
+                    if current_price >= last_price: return "HOLD", 0
+                    
+                    body_size = abs(current_price - last_price)
+                    avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
+                    if body_size > (avg_body * 2.5): return "HOLD", 0
+
+                    return "SELL", atr
+
+            return "HOLD", 0 # Retorno padrão se nenhum if for satisfeito
+
+        except Exception:
+            return "HOLD", 0 # Garante que o bot nunca receba NoneType
+
     def is_market_safe(self):
         agora = datetime.datetime.now()
-        # Evita os primeiros e últimos 5 minutos de cada hora (volatilidade institucional)
+        # Evita volatilidade de abertura/fechamento de hora
         if agora.minute < 5 or agora.minute > 55:
             return False
         return True
-    
-    def calculate_atr(self, df, period=14):
-        if len(df) < period:
-            # Se não houver dados suficientes, retorna uma série de zeros
-            return pd.Series(0, index=df.index)
 
+    # =========================================================
+    # 3. GESTÃO DE RISCO E PROTEÇÃO (TRAILING / PARCIAL)
+    # =========================================================
+    def monitor_protection(self, current_price):
+        if not self.is_positioned: return None
+
+        atr_series = self.calculate_atr(self.data_1m, 14)
+        if len(atr_series) < 1: return None
+        atr = atr_series.iloc[-1]
+        if atr <= 0: return None
+
+        changed = False
+        
+        # --- A) LUCRO PARCIAL (PARTIAL TAKE PROFIT) ---
+        # Aumentamos para 1.8% para evitar sair cedo demais em moedas voláteis
+        if self.side == "BUY":
+            if not self.partial_taken and current_price >= self.entry_price * 1.018:
+                return "PARTIAL_EXIT" 
+        
+        elif self.side == "SELL":
+            if not self.partial_taken and current_price <= self.entry_price * 0.982:
+                return "PARTIAL_EXIT"
+
+        # --- B) TRAILING STOP DINÂMICO (PASSO 2) ---
+        # Calculamos a porcentagem de lucro atual para decidir a folga
+        pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
+
+        # Lógica de "Enforcamento" Gradual:
+        # Se lucro < 1.5%: Distância de 4.5x ATR (Muita folga para evitar violino)
+        # Se lucro >= 1.5%: Distância de 3.0x ATR (Protege o lucro real)
+        if pnl_pct < 0.015:
+            trail_dist = atr * 4.5
+        else:
+            trail_dist = atr * 3.0
+
+        if self.side == "BUY":
+            # Ativa BE apenas após 1.4% de lucro (mais seguro contra o "violino")
+            if not self.be_activated and pnl_pct >= 0.014:
+                # Novo SL apenas cobre taxas (0.05% de lucro real)
+                new_sl = self.entry_price * 1.0005 
+                if new_sl > self.sl_price:
+                    self.sl_price = new_sl
+                    self.be_activated = True
+                    changed = True
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (Folga Ativada) em {new_sl}")
+
+            # Trailing Stop
+            trail_sl = current_price - trail_dist
+            if trail_sl > self.sl_price:
+                # Só atualiza se subir pelo menos 0.12% para poupar API
+                if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0012: 
+                    self.sl_price = trail_sl
+                    changed = True
+
+        elif self.side == "SELL":
+            # Ativa BE após 1.4% de lucro
+            if not self.be_activated and pnl_pct >= 0.014:
+                new_sl = self.entry_price * 0.9995 
+                if new_sl < self.sl_price or self.sl_price == 0:
+                    self.sl_price = new_sl
+                    self.be_activated = True
+                    changed = True
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (Folga Ativada) em {new_sl}")
+
+            # Trailing Stop
+            trail_sl = current_price + trail_dist
+            if (self.sl_price == 0) or (trail_sl < self.sl_price):
+                if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0012:
+                    self.sl_price = trail_sl
+                    changed = True
+
+        return "UPDATE_SL" if changed else None
+
+    # =========================================================
+    # 4. INDICADORES TÉCNICOS E MATEMÁTICOS
+    # =========================================================
+    def calculate_atr(self, df, period=14):
+        if len(df) < period: return pd.Series(0, index=df.index)
         high_low = df['high'] - df['low']
         high_close = (df['high'] - df['close'].shift()).abs()
         low_close = (df['low'] - df['close'].shift()).abs()
-
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
-
-        # Usamos o Simple Moving Average do True Range (SMA ATR)
-        # fillna(0) garante que o bot não receba um "NaN" e quebre o cálculo do SL
-        atr = true_range.rolling(window=period).mean().fillna(0)
-
-        return atr
-
-    def add_new_candle(self, timeframe, candle_data):
-        df = self.data_1m if timeframe == "1m" else self.data_15m
-        if not df.empty and candle_data['timestamp'] == df.iloc[-1]['timestamp']:
-            idx = df.index[-1]
-            df.at[idx, 'close'] = candle_data['close']
-            df.at[idx, 'volume'] = candle_data['volume']
-            if candle_data['high'] > df.at[idx, 'high']: df.at[idx, 'high'] = candle_data['high']
-            if candle_data['low'] < df.at[idx, 'low']: df.at[idx, 'low'] = candle_data['low']
-        else:
-            new_row = pd.DataFrame([candle_data])
-            df = pd.concat([df, new_row], ignore_index=True).tail(300)
-        
-        if timeframe == "1m": self.data_1m = df
-        else: self.data_15m = df
+        return true_range.rolling(window=period).mean().fillna(0)
 
     def calculate_ema(self, df, period=200):
         return df['close'].ewm(span=period, adjust=False).mean()
@@ -74,171 +201,42 @@ class TradingStrategy:
         exp2 = df['close'].ewm(span=slow, adjust=False).mean()
         macd_line = exp1 - exp2
         signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-        histogram = macd_line - signal_line 
-        return macd_line, signal_line, histogram
+        return macd_line, signal_line, macd_line - signal_line
 
-    def check_signal(self):
-        # 1. Filtros de Segurança Básicos
-        if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
-            return "HOLD", 0
+    # =========================================================
+    # 5. MANIPULAÇÃO DE DADOS E CACHE
+    # =========================================================
+    def add_new_candle(self, timeframe, candle_data):
+        df = self.data_1m if timeframe == "1m" else self.data_15m
+        if not df.empty and candle_data['timestamp'] == df.iloc[-1]['timestamp']:
+            idx = df.index[-1]
+            df.at[idx, 'close'] = candle_data['close']
+            df.at[idx, 'volume'] = candle_data['volume']
+            if candle_data['high'] > df.at[idx, 'high']: df.at[idx, 'high'] = candle_data['high']
+            if candle_data['low'] < df.at[idx, 'low']: df.at[idx, 'low'] = candle_data['low']
+        else:
+            new_row = pd.DataFrame([candle_data])
+            df = pd.concat([df, new_row], ignore_index=True).tail(300)
         
-        # 2. Dados Atuais
-        atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
-        current_price = self.data_1m['close'].iloc[-1]
-        last_price = self.data_1m['close'].iloc[-2]
-        current_volume = self.data_1m['volume'].iloc[-1]
-        avg_volume = self.data_1m['volume'].tail(20).mean()
-        
-        volume_ok = current_volume > (avg_volume * 1.1)
+        if timeframe == "1m": self.data_1m = df.copy()
+        else: self.data_15m = df.copy()
 
-        if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
-            return "HOLD", 0
-
-        # 3. Indicadores
-        ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
-        ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
-        rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
-        
-        macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
-        
-        if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
-            return "HOLD", 0
-
-        score = 0
-        
-        # --- LÓGICA DE COMPRA (LONG) ---
-        if current_price > ema_200_15m:
-            if rsi_1m < 45: score += 1
-            if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
-            if current_price < ema_20_1m: score += 1
-            
-            # 1. Checagem de Score e Volume
-            if score >= 3 and volume_ok:
-                
-                # 2. Filtro de Direção: Só compra se estiver SUBINDO (Vela Verde)
-                if current_price <= last_price:
-                    return "HOLD", 0
-
-                # 3. Filtro de Exaustão
-                body_size = abs(current_price - last_price)
-                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                
-                if body_size > (avg_body * 2.5): 
-                    return "HOLD", 0
-                
-                return "BUY", atr
-
-        # --- LÓGICA DE VENDA (SHORT) ---
-        elif current_price < ema_200_15m:
-            if rsi_1m > 55: score += 1
-            if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
-            if current_price > ema_20_1m: score += 1
-            
-            if score >= 3 and volume_ok:
-                # 1. Filtro de Direção: Só vende se o preço atual for menor que o anterior (vela vermelha)
-                if current_price >= last_price:
-                    return "HOLD", 0
-                
-                body_size = abs(current_price - last_price)
-                avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-
-                # 2. Filtro de Exaustão: Evita vender no fundo de um "crash" momentâneo
-                if body_size > (avg_body * 2.5):
-                    return "HOLD", 0
-
-                return "SELL", atr
-    
     def load_historical_data(self, timeframe_label, candles):
-        df_data = []
-        for c in candles:
-            df_data.append({
-                "high": float(c[2]), "low": float(c[3]), "close": float(c[4]), "timestamp": int(c[0]), "volume": float(c[5])
-            })
+        df_data = [{"high": float(c[2]), "low": float(c[3]), "close": float(c[4]), 
+                    "timestamp": int(c[0]), "volume": float(c[5])} for c in candles]
         new_df = pd.DataFrame(df_data)
         if timeframe_label == "1m": self.data_1m = new_df
         else: self.data_15m = new_df
         
-    def monitor_protection(self, current_price):
-        if not self.is_positioned:
-            return None
-
-        atr_series = self.calculate_atr(self.data_1m, 14)
-        if len(atr_series) < 1: return None
-        atr = atr_series.iloc[-1]
-        if atr <= 0: return None
-
-        changed = False
-        
-        # --- LÓGICA DE TAKE PROFIT EM ESCADA (PARTIAL CLOSE) ---
-        # Alvo 1: 1.5% de lucro
-        if self.side == "BUY":
-            if not self.partial_taken and current_price >= self.entry_price * 1.015:
-                self.partial_taken = True
-                return "PARTIAL_EXIT" # Comando para o main.py
-        
-        # --- AJUSTE DE DISTÂNCIA ---
-        # Aumentamos a folga do Trailing para 3.5x ATR
-        # Assim ele só sobe o SL quando o lucro for realmente expressivo
-        trail_dist = atr * 3.5
-
-        if self.side == "BUY":
-            # 1. BREAK-EVEN (Proteção rápida)
-            # Movemos para o zero a zero apenas quando atingir 0.7% de lucro
-            # Isso evita ser estopado na entrada por qualquer oscilação boba.
-            if not self.be_activated and current_price >= self.entry_price * 1.012:
-                new_sl = self.entry_price * 1.002 # Entrada + taxas
-                if new_sl > self.sl_price:
-                    self.sl_price = new_sl
-                    self.be_activated = True
-                    changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
-
-            # 2. TRAILING STOP (Seguindo o lucro)
-            trail_sl = current_price - trail_dist
-            if trail_sl > self.sl_price:
-                # Só atualiza se a subida for relevante (> 0.1%) para poupar a API
-                if (trail_sl - self.sl_price) / self.sl_price > 0.001: 
-                    self.sl_price = trail_sl
-                    changed = True
-
-        elif self.side == "SELL":
-            if not self.partial_taken and current_price <= self.entry_price * 0.985:
-                self.partial_taken = True
-                return "PARTIAL_EXIT"
-            
-            # 1. BREAK-EVEN
-            if not self.be_activated and current_price <= self.entry_price * 0.993:
-                new_sl = self.entry_price * 0.999 # Entrada - taxas
-                if new_sl < self.sl_price or self.sl_price == 0:
-                    self.sl_price = new_sl
-                    self.be_activated = True
-                    changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {new_sl}")
-
-            # 2. TRAILING STOP
-            trail_sl = current_price + trail_dist
-            if trail_sl < self.sl_price or self.sl_price == 0:
-                if (self.sl_price - trail_sl) / trail_sl > 0.001:
-                    self.sl_price = trail_sl
-                    changed = True
-
-        return "UPDATE_SL" if changed else None
-    
     def sync_position(self, side, entry_price, sl_price, tp_price):
-        # Função auxiliar para evitar o erro de string vazia
         def safe_float(val):
-            try:
-                return float(val) if val and str(val).strip() != "" else 0.0
-            except:
-                return 0.0
-
+            try: return float(val) if val and str(val).strip() != "" else 0.0
+            except: return 0.0
         self.is_positioned = True
         self.side = "BUY" if side == "Buy" else "SELL"
         self.entry_price = safe_float(entry_price)
         self.sl_price = safe_float(sl_price)
         self.tp_price = safe_float(tp_price)
-        
-        # Se o SL já estiver no preço de entrada ou melhor, ativa o BE
-        if (self.side == "BUY" and self.sl_price >= self.entry_price and self.entry_price > 0) or \
-           (self.side == "SELL" and self.sl_price <= self.entry_price and self.entry_price > 0):
+        if (self.side == "BUY" and self.sl_price >= self.entry_price > 0) or \
+           (self.side == "SELL" and 0 < self.sl_price <= self.entry_price):
             self.be_activated = True
