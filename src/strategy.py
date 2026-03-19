@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import datetime
+import logging
+
+log = logging.getLogger(__name__)
 
 class TradingStrategy:
     # =========================================================
@@ -23,16 +26,16 @@ class TradingStrategy:
         self.partial_taken = False 
 
     # =========================================================
-    # 2. LÓGICA DE SINAL (ESTRATÉGIA)
+    # 2. LÓGICA DE SINAL (ESTRATÉGIA COM FILTRO M15)
     # =========================================================
     def check_signal(self):
         """Analisa indicadores e retorna (Sinal, ATR)"""
         try:
-            # 1. Filtros de Segurança Básicos
+            # 1. Filtros de Segurança Básicos (M15 precisa de 200 períodos para a EMA)
             if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
                 return "HOLD", 0
             
-            # 2. Cálculo de ATR e Volume
+            # 2. Cálculo de ATR e Volume no M1
             atr_series = self.calculate_atr(self.data_1m, 14)
             if len(atr_series) == 0: return "HOLD", 0
             
@@ -47,8 +50,10 @@ class TradingStrategy:
             if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
                 return "HOLD", 0
 
-            # 3. Indicadores Técnicos
+            # 3. Indicadores Técnicos - O FILTRO SNIPER (EMA 200 no M15)
             ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
+            
+            # Indicadores do M1 para o gatilho
             ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
             rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
             macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
@@ -58,7 +63,7 @@ class TradingStrategy:
 
             score = 0
             
-            # --- LÓGICA DE COMPRA (LONG) ---
+            # --- LÓGICA DE COMPRA (LONG) - SÓ SE PREÇO > EMA 200 M15 ---
             if current_price > ema_200_15m:
                 if rsi_1m < 45: score += 1
                 if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
@@ -72,9 +77,10 @@ class TradingStrategy:
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
                     if body_size > (avg_body * 2.5): return "HOLD", 0
                     
+                    log.info(f"🚀 [SINAL COMPRA] {self.symbol} alinhado com tendência M15")
                     return "BUY", atr
 
-            # --- LÓGICA DE VENDA (SHORT) ---
+            # --- LÓGICA DE VENDA (SHORT) - SÓ SE PREÇO < EMA 200 M15 ---
             elif current_price < ema_200_15m:
                 if rsi_1m > 55: score += 1
                 if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
@@ -87,22 +93,24 @@ class TradingStrategy:
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
                     if body_size > (avg_body * 2.5): return "HOLD", 0
 
+                    log.info(f"🚀 [SINAL VENDA] {self.symbol} alinhado com tendência M15")
                     return "SELL", atr
 
-            return "HOLD", 0 # Retorno padrão se nenhum if for satisfeito
+            return "HOLD", 0 
 
-        except Exception:
-            return "HOLD", 0 # Garante que o bot nunca receba NoneType
+        except Exception as e:
+            log.error(f"Erro em check_signal ({self.symbol}): {e}")
+            return "HOLD", 0 
 
     def is_market_safe(self):
         agora = datetime.datetime.now()
-        # Evita volatilidade de abertura/fechamento de hora
+        # Evita volatilidade extrema de virada de hora (00-05 e 55-60)
         if agora.minute < 5 or agora.minute > 55:
             return False
         return True
 
     # =========================================================
-    # 3. GESTÃO DE RISCO E PROTEÇÃO (TRAILING / PARCIAL)
+    # 3. GESTÃO DE RISCO E PROTEÇÃO
     # =========================================================
     def monitor_protection(self, current_price):
         if not self.is_positioned: return None
@@ -114,58 +122,47 @@ class TradingStrategy:
 
         changed = False
         
-        # --- A) LUCRO PARCIAL (PARTIAL TAKE PROFIT) ---
-        # Aumentamos para 1.8% para evitar sair cedo demais em moedas voláteis
+        # --- A) LUCRO PARCIAL ---
         if self.side == "BUY":
             if not self.partial_taken and current_price >= self.entry_price * 1.018:
                 return "PARTIAL_EXIT" 
-        
         elif self.side == "SELL":
             if not self.partial_taken and current_price <= self.entry_price * 0.982:
                 return "PARTIAL_EXIT"
 
-        # --- B) TRAILING STOP DINÂMICO (PASSO 2) ---
-        # Calculamos a porcentagem de lucro atual para decidir a folga
+        # --- B) TRAILING STOP DINÂMICO ---
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
 
-        # Lógica de "Enforcamento" Gradual:
-        # Se lucro < 1.5%: Distância de 4.5x ATR (Muita folga para evitar violino)
-        # Se lucro >= 1.5%: Distância de 3.0x ATR (Protege o lucro real)
+        # Enforcamento gradual baseado no PnL
         if pnl_pct < 0.015:
-            trail_dist = atr * 4.5
+            trail_dist = atr * 4.5 # Folga para respirar no início
         else:
-            trail_dist = atr * 3.0
+            trail_dist = atr * 3.0 # Proteção agressiva no lucro
 
         if self.side == "BUY":
-            # Ativa BE apenas após 1.4% de lucro (mais seguro contra o "violino")
             if not self.be_activated and pnl_pct >= 0.014:
-                # Novo SL apenas cobre taxas (0.05% de lucro real)
                 new_sl = self.entry_price * 1.0005 
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (Folga Ativada) em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even Ativado em {new_sl}")
 
-            # Trailing Stop
             trail_sl = current_price - trail_dist
             if trail_sl > self.sl_price:
-                # Só atualiza se subir pelo menos 0.12% para poupar API
                 if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0012: 
                     self.sl_price = trail_sl
                     changed = True
 
         elif self.side == "SELL":
-            # Ativa BE após 1.4% de lucro
             if not self.be_activated and pnl_pct >= 0.014:
                 new_sl = self.entry_price * 0.9995 
                 if new_sl < self.sl_price or self.sl_price == 0:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (Folga Ativada) em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even Ativado em {new_sl}")
 
-            # Trailing Stop
             trail_sl = current_price + trail_dist
             if (self.sl_price == 0) or (trail_sl < self.sl_price):
                 if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0012:
@@ -175,7 +172,7 @@ class TradingStrategy:
         return "UPDATE_SL" if changed else None
 
     # =========================================================
-    # 4. INDICADORES TÉCNICOS E MATEMÁTICOS
+    # 4. INDICADORES TÉCNICOS
     # =========================================================
     def calculate_atr(self, df, period=14):
         if len(df) < period: return pd.Series(0, index=df.index)
@@ -187,9 +184,11 @@ class TradingStrategy:
         return true_range.rolling(window=period).mean().fillna(0)
 
     def calculate_ema(self, df, period=200):
+        if len(df) < period: return pd.Series(0, index=df.index)
         return df['close'].ewm(span=period, adjust=False).mean()
 
     def calculate_rsi(self, df, period=14):
+        if len(df) < period: return pd.Series(50, index=df.index)
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
@@ -197,6 +196,7 @@ class TradingStrategy:
         return 100 - (100 / (1 + rs))
     
     def calculate_macd(self, df, fast=12, slow=26, signal=9):
+        if len(df) < slow: return pd.Series(0), pd.Series(0), pd.Series(0)
         exp1 = df['close'].ewm(span=fast, adjust=False).mean()
         exp2 = df['close'].ewm(span=slow, adjust=False).mean()
         macd_line = exp1 - exp2
@@ -204,10 +204,12 @@ class TradingStrategy:
         return macd_line, signal_line, macd_line - signal_line
 
     # =========================================================
-    # 5. MANIPULAÇÃO DE DADOS E CACHE
+    # 5. MANIPULAÇÃO DE DADOS
     # =========================================================
     def add_new_candle(self, timeframe, candle_data):
+        """Adiciona ou atualiza velas em tempo real via WebSocket"""
         df = self.data_1m if timeframe == "1m" else self.data_15m
+        
         if not df.empty and candle_data['timestamp'] == df.iloc[-1]['timestamp']:
             idx = df.index[-1]
             df.at[idx, 'close'] = candle_data['close']
@@ -222,11 +224,16 @@ class TradingStrategy:
         else: self.data_15m = df.copy()
 
     def load_historical_data(self, timeframe_label, candles):
+        """Carrega dados históricos durante o warm-up"""
         df_data = [{"high": float(c[2]), "low": float(c[3]), "close": float(c[4]), 
                     "timestamp": int(c[0]), "volume": float(c[5])} for c in candles]
         new_df = pd.DataFrame(df_data)
-        if timeframe_label == "1m": self.data_1m = new_df
-        else: self.data_15m = new_df
+        
+        # Mapeamento para garantir que labels como "15m" ou "15" caiam no df certo
+        if "1m" in timeframe_label or timeframe_label == "1":
+            self.data_1m = new_df
+        else:
+            self.data_15m = new_df
         
     def sync_position(self, side, entry_price, sl_price, tp_price):
         def safe_float(val):
@@ -237,6 +244,8 @@ class TradingStrategy:
         self.entry_price = safe_float(entry_price)
         self.sl_price = safe_float(sl_price)
         self.tp_price = safe_float(tp_price)
+        
+        # Detecta se a posição já está em BE no momento da sincronização
         if (self.side == "BUY" and self.sl_price >= self.entry_price > 0) or \
            (self.side == "SELL" and 0 < self.sl_price <= self.entry_price):
             self.be_activated = True
