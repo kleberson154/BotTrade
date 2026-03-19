@@ -288,8 +288,8 @@ if __name__ == "__main__":
             get_cached_data()
             check_closed_trades()
             
-            # Heartbeat a cada 15 min (900 seg)
-            if timestamp_atual - ULTIMO_CHECK_VIVO >= 900:
+            # Heartbeat a cada 1 hora (3600 seg)
+            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
                 if SALDO_INICIAL_DIA is None: SALDO_INICIAL_DIA = cache_balance['total']
                 pnl_dia = risk_mgr.get_total_pnl()
                 status_fila = "⚠️ ATRASADO" if message_queue.qsize() > 50 else "Normal"
