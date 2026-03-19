@@ -258,6 +258,62 @@ def create_and_subscribe_websocket():
         ws_client.kline_stream(interval=15, symbol=symbol, callback=on_message)
     return ws_client
 
+def start_bot():
+    # Declaramos globais para o Python saber que estamos usando as variáveis de fora
+    global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws 
+    
+    erros_seguidos = 0
+    
+    try:
+        while True:
+            try:
+                timestamp_atual = time.time()
+                get_cached_data()
+                check_closed_trades()
+
+                # Heartbeat a cada 1 hora
+                if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
+                    if SALDO_INICIAL_DIA is None: 
+                        SALDO_INICIAL_DIA = cache_balance.get('total', 0)
+                    
+                    pnl_dia = risk_mgr.get_total_pnl()
+                    status_fila = "⚠️ ATRASADO" if message_queue.qsize() > 50 else "Normal"
+                    emoji_pnl = "📈" if pnl_dia >= 0 else "📉"
+
+                    notifier.send_message(
+                        f"🤖 *Heartbeat*\n"
+                        f"💰 Saldo: ${cache_balance['total']:.2f}\n"
+                        f"{emoji_pnl} PnL Dia: ${pnl_dia:.2f}\n"
+                        f"📡 Fila: {message_queue.qsize()} ({status_fila})"
+                    )
+                    ULTIMO_CHECK_VIVO = timestamp_atual
+
+                # Verificação de conexão do WebSocket
+                if not ws.is_connected():
+                    log.warning("⚠️ WS Offline. Reconectando...")
+                    ws = create_and_subscribe_websocket()
+
+                gc.collect() 
+                erros_seguidos = 0 # Reseta contador de erros se chegou aqui
+                time.sleep(15) 
+
+            except KeyboardInterrupt: 
+                log.info("Parada manual detectada.")
+                break
+            except Exception as e:
+                erros_seguidos += 1
+                log.error(f"Erro Loop ({erros_seguidos}/5): {e}")
+                time.sleep(5)
+                
+                # Se der 5 erros seguidos no loop interno, explode para o PM2 reiniciar tudo
+                if erros_seguidos > 5:
+                    raise Exception("Múltiplos erros no loop interno. Reiniciando bot...")
+
+    except Exception as e:
+        print(f"❌ Erro Crítico: {e}")
+        import sys
+        sys.exit(1) # PM2 vai ler isso e dar o restart
+
 # =========================================================
 # 4. START DO BOT (BLOCO FINAL)
 # =========================================================
@@ -281,36 +337,4 @@ if __name__ == "__main__":
 
     ws = create_and_subscribe_websocket()
     notifier.send_message("🤖 Bot Ativo - Monitorando sinais...")
-
-    while True:
-        try:
-            timestamp_atual = time.time()
-            get_cached_data()
-            check_closed_trades()
-            
-            # Heartbeat a cada 1 hora (3600 seg)
-            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
-                if SALDO_INICIAL_DIA is None: SALDO_INICIAL_DIA = cache_balance['total']
-                pnl_dia = risk_mgr.get_total_pnl()
-                status_fila = "⚠️ ATRASADO" if message_queue.qsize() > 50 else "Normal"
-                emoji_pnl = "📈" if pnl_dia >= 0 else "📉"
-                
-                notifier.send_message(
-                    f"🤖 *Heartbeat*\n"
-                    f"💰 Saldo: ${cache_balance['total']:.2f}\n"
-                    f"{emoji_pnl} PnL Dia: ${pnl_dia:.2f}\n"
-                    f"📡 Fila: {message_queue.qsize()} ({status_fila})"
-                )
-                ULTIMO_CHECK_VIVO = timestamp_atual
-            
-            if not ws.is_connected():
-                log.warning("⚠️ WS Offline. Reconectando...")
-                ws = create_and_subscribe_websocket()
-                
-            gc.collect() # Limpeza de lixo na memória da Oracle
-            time.sleep(15) 
-            
-        except KeyboardInterrupt: break
-        except Exception as e:
-            log.error(f"Erro Loop: {e}")
-            time.sleep(5)
+    start_bot()

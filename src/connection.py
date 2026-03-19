@@ -25,13 +25,14 @@ def handle_message(message):
     print(f"Novo preço: {data[0]['close']}")
 
 def get_websocket_session(testnet=False):
-    # Forçamos valores agressivos para manter a conexão ativa
+    # Usamos a mesma lógica de segurança do privado
+    p_int, p_out, ret = _safe_ws_ping_config("PUBLIC_WS") 
     return WebSocket(
         testnet=testnet,
         channel_type="linear",
-        ping_interval=20,  # Envia ping a cada 20 segundos
-        ping_timeout=10,   # Se não responder em 10s, considera erro
-        retries=20,
+        ping_interval=p_int,
+        ping_timeout=p_out,
+        retries=ret,
         restart_on_error=True
     )
 
