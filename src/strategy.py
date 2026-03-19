@@ -77,6 +77,7 @@ class TradingStrategy:
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
                     if body_size > (avg_body * 2.5): return "HOLD", 0
                     
+                    self.notifier.send_message(f"🚀 [SINAL COMPRA] {self.symbol} alinhado com tendência M15")
                     log.info(f"🚀 [SINAL COMPRA] {self.symbol} alinhado com tendência M15")
                     return "BUY", atr
 
@@ -93,6 +94,7 @@ class TradingStrategy:
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
                     if body_size > (avg_body * 2.5): return "HOLD", 0
 
+                    self.notifier.send_message(f"🚀 [SINAL VENDA] {self.symbol} alinhado com tendência M15")
                     log.info(f"🚀 [SINAL VENDA] {self.symbol} alinhado com tendência M15")
                     return "SELL", atr
 
