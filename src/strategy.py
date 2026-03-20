@@ -35,6 +35,18 @@ class TradingStrategy:
             if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
                 return "HOLD", 0
             
+            # --- NOVO FILTRO DE VOLATILIDADE SNIPER ---
+            # Calcula a variação média do corpo das velas (Open vs Close) nas últimas 20 velas
+            # Isso mede se a moeda está realmente se "mexendo" ou apenas lateralizando
+            recent_candles = self.data_1m.tail(20)
+            candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
+
+            # REGRA: Se a variação média for menor que 0.12% (0.0012), a moeda está morta.
+            # (Pode ajustar para 0.0015 se quiser ser ainda mais rigoroso)
+            if candle_variation < 0.0012:
+                # log.debug(f"💤 {self.symbol} sem volatilidade ({candle_variation:.4%})")
+                return "HOLD", 0
+            
             # 2. Cálculo de ATR e Volume no M1
             atr_series = self.calculate_atr(self.data_1m, 14)
             if len(atr_series) == 0: return "HOLD", 0
@@ -134,56 +146,62 @@ class TradingStrategy:
 
         changed = False
         
-        # --- A) LUCRO PARCIAL ---
-        if self.side == "BUY":
-            if not self.partial_taken and current_price >= self.entry_price * 1.012:
-                return "PARTIAL_EXIT" 
-        elif self.side == "SELL":
-            if not self.partial_taken and current_price <= self.entry_price * 0.988:
-                return "PARTIAL_EXIT"
-
-        # --- B) TRAILING STOP DINÂMICO ---
+        # Cálculo de lucro atual (positivo para lucro, negativo para prejuízo)
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
+    
+        # --- A) DEFINIÇÃO DA DISTÂNCIA DE TRAILING (ADAPTATIVA) ---
+        if pnl_pct < 0.015: 
+            trail_dist = atr * 5.5   # Mais folga no início para não ser stopado por ruído
+        elif pnl_pct < 0.03: 
+            trail_dist = atr * 4.0   # Encurta a distância quando o lucro cresce
+        else: 
+            trail_dist = atr * 2.5   # "Enforca" o preço para garantir o lucro gordo
 
-        # NOVO LOGICA: Mais folga no início para fugir das taxas
-        if pnl_pct < 0.015:  # Enquanto o lucro for menor que 1.5%
-            # Aumentamos de 3.0 para 5.5. Isso dá um "respiro" enorme para a moeda oscilar
-            trail_dist = atr * 5.5  
-        elif pnl_pct < 0.03: # Entre 1.5% e 3% de lucro
-            trail_dist = atr * 4.0
-        else:                # Quando já estiver ganhando bem (> 3%)
-            trail_dist = atr * 2.5 # Aqui "enforcamos" para garantir o lucro gordo
-
+        # --- B) LÓGICA DE PROTEÇÃO (COMPRA) ---
         if self.side == "BUY":
+            # 1. Break-even (Trava no lucro mínimo inicial)
             if not self.be_activated and pnl_pct >= 0.010:
-                new_sl = self.entry_price * 1.0005 
+                new_sl = self.entry_price * 1.0005
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even Ativado em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even em {new_sl}")
 
+            # 2. Trailing Stop (Sobe acompanhando o preço)
             trail_sl = current_price - trail_dist
             if trail_sl > self.sl_price:
+                # Verifica se a mudança é significativa (> 0.12%) para evitar spam na API
                 if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0012: 
                     self.sl_price = trail_sl
                     changed = True
 
+        # --- C) LÓGICA DE PROTEÇÃO (VENDA) ---
         elif self.side == "SELL":
+            # 1. Break-even (Trava no lucro mínimo inicial)
             if not self.be_activated and pnl_pct >= 0.014:
-                new_sl = self.entry_price * 0.9995 
+                new_sl = self.entry_price * 0.9995
                 if new_sl < self.sl_price or self.sl_price == 0:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even Ativado em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even em {new_sl}")
 
+            # 2. Trailing Stop (Desce acompanhando o preço no Short)
             trail_sl = current_price + trail_dist
             if (self.sl_price == 0) or (trail_sl < self.sl_price):
+                # Verifica se a mudança é significativa (> 0.12%)
                 if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0012:
                     self.sl_price = trail_sl
                     changed = True
 
+        # --- D) VERIFICAÇÃO DE SAÍDA PARCIAL ---
+        # Só retorna PARTIAL_EXIT se ainda não foi feita e atingiu o alvo
+        if not self.partial_taken:
+            if (self.side == "BUY" and current_price >= self.entry_price * 1.012) or \
+               (self.side == "SELL" and current_price <= self.entry_price * 0.988):
+                return "PARTIAL_EXIT" 
+    
         return "UPDATE_SL" if changed else None
 
     # =========================================================

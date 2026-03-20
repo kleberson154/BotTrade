@@ -154,14 +154,34 @@ def execute_partial_tp(symbol, strat, current_price):
 
 def update_remote_sl(symbol, new_sl):
     try:
-        _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        session.set_trading_stop(
-            category="linear", symbol=symbol,
-            stopLoss=str(round(new_sl, p_prec)), tpslMode="Full"
-        )
-        log.info(f"🛡️ SL Atualizado ({symbol}): {new_sl}")
+        # 1. Verificação de Segurança: A posição ainda existe?
+        pos_resp = session.get_positions(category="linear", symbol=symbol)
+        
+        if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
+            pos = pos_resp['result']['list'][0]
+            size = float(pos.get('size', 0))
+            
+            # Se o tamanho da posição for 0, ela já foi fechada pelo TP ou SL da Bybit
+            if size == 0:
+                log.info(f"ℹ️ {symbol} já fechou no TP/SL. Ignorando atualização de trava.")
+                return
+
+            # 2. Se a posição existe, atualizamos o Stop
+            _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+            session.set_trading_stop(
+                category="linear", 
+                symbol=symbol,
+                stopLoss=str(round(new_sl, p_prec)), 
+                tpslMode="Full"
+            )
+            log.info(f"🛡️ SL Atualizado ({symbol}): {new_sl}")
+            
     except Exception as e:
-        log.error(f"Erro ao atualizar Stop: {e}")
+        # Filtra o erro 10001 para não sujar o log se a posição fechar durante a requisição
+        if "10001" in str(e):
+            log.info(f"ℹ️ {symbol} fechou durante a tentativa de update.")
+        else:
+            log.error(f"Erro ao atualizar Stop {symbol}: {e}")
 
 # =========================================================
 # 3. AUXILIARES DE DADOS E WEBSOCKET
@@ -252,8 +272,10 @@ def sync_historical_pnl(start_date="2026-03-18"):
                         risk_mgr.stats['total_trades'] += 1
                         if pnl_liquido > 0:
                             risk_mgr.stats['wins'] += 1
+                            mensagem = f"🎯 [ALVO ATINGIDO] {symbol}\n💰 Lucro Líquido: ${pnl_liquido:.2f}\n🚀"
                         else:
                             risk_mgr.stats['losses'] += 1
+                            mensagem = f"🛑 [STOP LOSS] {symbol}\n📉 Perda: ${pnl_liquido:.2f}"
                             
                         # 3. Adiciona aos totais financeiros do objeto
                         risk_mgr.total_pnl_bruto += pnl_bruto
@@ -261,6 +283,7 @@ def sync_historical_pnl(start_date="2026-03-18"):
                         
                         processed_orders.add(order_id)
                         total_recuperado += 1
+                        notifier.send_message(mensagem)
         
         log.info(f"✅ Sincronização concluída: {total_recuperado} trades processados.")
         
