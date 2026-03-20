@@ -12,28 +12,35 @@ class RiskManager:
         self.trades_history = []
         
         self.stats = {
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "pnl_history": {} # Armazena lucro/prejuízo acumulado por par
+            'wins': 0,
+            'losses': 0,
+            'protected': 0, # <-- Nova categoria
+            'total_trades': 0,
+            'pnl_history': {}
         }
         
         # Mapeamento de precisão da Bybit: (Quantidade, Preço)
         self.PRECISION_MAP = {
             "BTCUSDT": (3, 2), "ETHUSDT": (2, 2), "SOLUSDT": (1, 3),
             "LINKUSDT": (1, 3), "AVAXUSDT": (1, 3), "XRPUSDT": (1, 4),
-            "ADAUSDT": (0, 4), "DEFAULT": (1, 4)
+            "ADAUSDT": (0, 4), "NEARUSDT": (1, 3), "DOTUSDT": (1, 3),  
+            "SUIUSDT": (1, 4),  "FETUSDT": (1, 4),  "OPUSDT": (1, 4),   
+            "DEFAULT": (1, 4)
         }
 
     # =========================================================
     # 2. GESTÃO DE DESEMPENHO (DASHBOARD)
     # =========================================================
     def update_dashboard(self, symbol, profit_loss):
-        """Atualiza as estatísticas e exibe o resumo no console"""
+        """Atualiza as estatísticas com distinção entre Loss e Proteção"""
         self.stats["total_trades"] += 1
         
+        # CATEGORIZAÇÃO
         if profit_loss > 0: 
             self.stats["wins"] += 1
+        elif profit_loss > -0.15: # Se perdeu só as taxas, é Proteção (Break-even)
+            if "protected" not in self.stats: self.stats["protected"] = 0
+            self.stats["protected"] += 1
         else: 
             self.stats["losses"] += 1
         
@@ -42,8 +49,23 @@ class RiskManager:
             self.stats["pnl_history"][symbol] = 0.0
         self.stats["pnl_history"][symbol] += profit_loss
         
-        # Renderização visual do Dashboard
         self._print_terminal_dashboard()
+
+    def get_performance_stats(self):
+        """Retorna estatísticas detalhadas para o Telegram"""
+        total = self.stats["total_trades"]
+        wins = self.stats["wins"]
+        # Garante que a chave exista para evitar erros em contas novas
+        protected = self.stats.get("protected", 0)
+        
+        # Win Rate Real (exclui os protegidos do cálculo de erro)
+        win_rate = (wins / total * 100) if total > 0 else 0
+        # Taxa de Sobrevivência (Trades que não machucaram a banca)
+        survival_rate = ((wins + protected) / total * 100) if total > 0 else 0
+        
+        pnl_net = sum(self.stats["pnl_history"].values())
+        
+        return total, wins, protected, win_rate, survival_rate, pnl_net
 
     def _print_terminal_dashboard(self):
         """Exibe a performance acumulada desde o dia 18/03 no terminal"""

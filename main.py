@@ -245,11 +245,18 @@ def check_closed_trades():
 def sync_historical_pnl(start_date="2026-03-18"):
     try:
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
-        log.info(f"🔍 Sincronizando histórico silenciosamente desde {start_date}...")
+        log.info(f"🔍 Sincronizando histórico e categorizando desde {start_date}...")
 
         processed_orders = set()
         total_recuperado = 0
         
+        # Resetamos as estatísticas para não duplicar ao reiniciar
+        risk_mgr.stats['wins'] = 0
+        risk_mgr.stats['losses'] = 0
+        risk_mgr.stats['protected'] = 0
+        risk_mgr.stats['total_trades'] = 0
+        risk_mgr.total_fees = 0.0
+
         for symbol in SYMBOLS:
             resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
             
@@ -259,26 +266,28 @@ def sync_historical_pnl(start_date="2026-03-18"):
                     
                     if order_id not in processed_orders:
                         pnl_bruto = float(t['closedPnl'])
+                        # Taxas aproximadas de abertura e fechamento
                         fees = (float(t['cumEntryValue']) + float(t['cumExitValue'])) * 0.0006
                         pnl_liquido = pnl_bruto - fees
                         
-                        # ATUALIZAÇÃO INTERNA (Sem enviar Telegram)
-                        risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
+                        # --- LÓGICA DE CATEGORIZAÇÃO RETROATIVA ---
                         risk_mgr.stats['total_trades'] += 1
-                        
                         if pnl_liquido > 0:
                             risk_mgr.stats['wins'] += 1
+                        elif pnl_liquido > -0.15: # Onde entram os seus -0.01 da AVAX
+                            risk_mgr.stats['protected'] = risk_mgr.stats.get('protected', 0) + 1
                         else:
                             risk_mgr.stats['losses'] += 1
-                            
+                        # ------------------------------------------
+
+                        risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
                         risk_mgr.total_pnl_bruto += pnl_bruto
                         risk_mgr.total_fees += fees
                         
                         processed_orders.add(order_id)
                         total_recuperado += 1
         
-        log.info(f"✅ Sincronização concluída: {total_recuperado} trades recuperados.")
-        # Apenas o dashboard final será enviado no loop principal
+        log.info(f"✅ Sincronização concluída: {total_recuperado} trades organizados.")
     except Exception as e:
         log.error(f"❌ Erro na sincronização: {e}")
 
@@ -371,28 +380,22 @@ def start_bot():
 
                 # Heartbeat a cada 1 hora com Dashboard Completo
                 if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
-                    if SALDO_INICIAL_DIA is None: 
-                        SALDO_INICIAL_DIA = cache_balance.get('total', 0)
-                    
-                    # Pegamos as estatísticas reais do RiskManager (Líquidas)
-                    total_trades, win_rate, pnl_net = risk_mgr.get_performance_stats()
+                    # Pegamos as estatísticas expandidas
+                    total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
                     
                     status_cor = "🟢" if pnl_net >= 0 else "🔴"
-                    queue_size = message_queue.qsize()
-                    status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
-
-                    # Montagem do Dashboard Profissional
+                    
                     dashboard_msg = (
                         f"📊 *DASHBOARD DE PERFORMANCE*\n"
-                        f"📅 Período: Desde 18/03\n"
+                        f"📅 Desde: 18/03 | 🕒 {datetime.datetime.now().strftime('%H:%M')}\n"
                         f"---\n"
                         f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
-                        f"📈 *Win Rate:* `{win_rate:.1f}%` ({total_trades} trades)\n"
-                        f"💸 *Taxas Est.:* `-${risk_mgr.total_fees:.2f}`\n"
+                        f"📈 *Win Rate:* `{wr:.1f}%` 🎯\n"
+                        f"🛡️ *Sobrevivência:* `{sr:.1f}%` (Proteção)\n"
                         f"---\n"
-                        f"🏦 *Saldo USDT:* `${cache_balance.get('total', 0):.2f}`\n"
-                        f"📡 *Fila:* `{queue_size}` ({status_fila})\n"
-                        f"🕒 *Atualiz.:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
+                        f"✅ Wins: `{wins}` | 🛡️ BE: `{prot}` | ❌ Losses: `{total - wins - prot}`\n"
+                        f"💸 *Taxas Est.:* `-${risk_mgr.total_fees:.2f}`\n"
+                        f"🏦 *Saldo:* `${cache_balance.get('total', 0):.2f}`\n"
                     )
 
                     notifier.send_message(dashboard_msg)
