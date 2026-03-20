@@ -53,6 +53,16 @@ class TradingStrategy:
             # 3. Indicadores Técnicos - O FILTRO SNIPER (EMA 200 no M15)
             ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
             
+            # Adicione isso logo após calcular a ema_200_15m
+            distancia_ema = abs(current_price - ema_200_15m) / ema_200_15m
+
+            # Se o preço estiver MUITO longe da EMA 200 (> 5%), o risco de correção é alto.
+            limite_exaustao = 0.03 if self.symbol in ["XRPUSDT", "ADAUSDT"] else 0.05
+
+            if distancia_ema > limite_exaustao:
+                log.warning(f"⚠️ {self.symbol} esticado demais ({distancia_ema:.2%}). Limite: {limite_exaustao:.0%}")
+                return "HOLD", 0
+            
             # Indicadores do M1 para o gatilho
             ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
             rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
@@ -126,10 +136,10 @@ class TradingStrategy:
         
         # --- A) LUCRO PARCIAL ---
         if self.side == "BUY":
-            if not self.partial_taken and current_price >= self.entry_price * 1.018:
+            if not self.partial_taken and current_price >= self.entry_price * 1.012:
                 return "PARTIAL_EXIT" 
         elif self.side == "SELL":
-            if not self.partial_taken and current_price <= self.entry_price * 0.982:
+            if not self.partial_taken and current_price <= self.entry_price * 0.988:
                 return "PARTIAL_EXIT"
 
         # --- B) TRAILING STOP DINÂMICO ---
@@ -145,8 +155,8 @@ class TradingStrategy:
             trail_dist = atr * 2.5 # Aqui "enforcamos" para garantir o lucro gordo
 
         if self.side == "BUY":
-            if not self.be_activated and pnl_pct >= 0.016:
-                new_sl = self.entry_price * 1.002 
+            if not self.be_activated and pnl_pct >= 0.010:
+                new_sl = self.entry_price * 1.0005 
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True

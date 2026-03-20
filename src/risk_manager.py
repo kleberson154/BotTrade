@@ -95,13 +95,13 @@ class RiskManager:
         """Calcula estatísticas baseadas no histórico real injetado"""
         total_trades = self.stats.get('total_trades', 0)
         wins = self.stats.get('wins', 0)
-        
+
         # Win Rate baseado nos contadores que o sync_historical_pnl atualiza
         win_rate = (wins / max(1, total_trades)) * 100
-        
+
         # PnL Líquido somando o histórico de todas as moedas
         pnl_net_total = sum(self.stats["pnl_history"].values())
-        
+
         return total_trades, win_rate, pnl_net_total
 
     # =========================================================
@@ -136,18 +136,27 @@ class RiskManager:
     # =========================================================
     def get_sl_tp_adaptive(self, symbol, side, current_price, atr, leverage):
         """Define SL e TP baseados na volatilidade (ATR) e alavancagem"""
-        # Busca precisão do par ou usa o padrão
         prec_info = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
         price_precision = prec_info[1]
         
         price = float(current_price)
         
-        # Distâncias baseadas no ATR (Volatilidade atual)
-        sl_distance = atr * 3.5
-        tp_distance = atr * 6.0
+        # --- AJUSTE SNIPER: MAIS FOLGA E ALVO MAIOR ---
+        # Aumentamos o SL de 3.5 para 4.5 para evitar "violinadas" (ruído)
+        # Aumentamos o TP de 6.0 para 9.0 para buscar o 2:1 real (pós-taxas)
+        sl_distance = atr * 4.5
+        tp_distance = atr * 9.0
         
+        # --- FILTRO DE VIABILIDADE (ANTI-TAXA) ---
+        # Se a volatilidade (ATR) for tão baixa que o TP não cobre as taxas (0.12%), 
+        # forçamos uma distância mínima de 0.6% para o TP
+        min_tp_dist = price * 0.006 
+        if tp_distance < min_tp_dist:
+            tp_distance = min_tp_dist
+            # Ajustamos o SL proporcionalmente para manter o gerenciamento
+            sl_distance = tp_distance / 2 
+
         # --- TRAVA ANTI-LIQUIDAÇÃO ---
-        # Garante que o Stop Loss esteja sempre antes de 70% da margem de liquidação
         max_safe_dist = (0.7 / leverage) * price
         if sl_distance > max_safe_dist:
             sl_distance = max_safe_dist
