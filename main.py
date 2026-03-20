@@ -354,7 +354,7 @@ def check_market_heat():
 
 def start_bot():
     # Adicionamos as globais que estavam faltando para o dashboard funcionar
-    global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws, cache_balance, message_queue, risk_mgr
+    global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws, cache_balance, message_queue, risk_mgr, ULTIMO_CHECK_CALOR
     
     erros_seguidos = 0
     
