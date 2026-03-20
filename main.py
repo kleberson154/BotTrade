@@ -366,10 +366,8 @@ def check_market_heat():
             # Status Visual
             if volat >= threshold:
                 status = "✅ DISPARADO (Operando)"
-                notifier.send_message(f"🚨 *Sinal de Calor:* {symbol}\nVolatilidade: {volat:.5f} ({percent_of_threshold:.1f}%)\nStatus: {status}")
             elif percent_of_threshold > 80:
                 status = "🟠 QUASE LÁ (Esquentando)"
-                notifier.send_message(f"⚠️ *Quase no Sniper:* {symbol}\nVolatilidade: {volat:.5f} ({percent_of_threshold:.1f}%)\nStatus: {status}")
             else:
                 status = "❄️ FRIO (Lateral)"
                 
