@@ -42,7 +42,7 @@ class TradingStrategy:
                     recent_candles = self.data_1m.tail(20)
                     # Cálculo da variação média
                     candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
-    
+
                     if candle_variation < 0.0012:
                         return "HOLD", 0
                 else:
@@ -261,17 +261,30 @@ class TradingStrategy:
         if timeframe == "1m": self.data_1m = df.copy()
         else: self.data_15m = df.copy()
 
-    def load_historical_data(self, timeframe_label, candles):
-        """Carrega dados históricos durante o warm-up"""
-        df_data = [{"high": float(c[2]), "low": float(c[3]), "close": float(c[4]), 
-                    "timestamp": int(c[0]), "volume": float(c[5])} for c in candles]
-        new_df = pd.DataFrame(df_data)
-        
-        # Mapeamento para garantir que labels como "15m" ou "15" caiam no df certo
-        if "1m" in timeframe_label or timeframe_label == "1":
-            self.data_1m = new_df
-        else:
-            self.data_15m = new_df
+    def load_historical_data(self, timeframe, candles):
+        """
+        Carrega dados históricos formatados como dicionários.
+        """
+        try:
+            # Se 'candles' já for uma lista de dicionários vinda da main, 
+            # o Pandas converte direto e corretamente.
+            df = pd.DataFrame(candles)
+            
+            # Garante que as colunas essenciais existam
+            required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            for col in required_columns:
+                if col not in df.columns:
+                    # Se faltar algo, preenchemos com 0 ou tratamos para não quebrar
+                    df[col] = 0.0
+
+            if timeframe == "1m":
+                self.data_1m = df
+            else:
+                self.data_15m = df
+                
+        except Exception as e:
+            # Use o seu logger aqui se disponível, ou print para debug rápido
+            print(f"Erro ao carregar histórico em {self.symbol}: {e}")
         
     def sync_position(self, side, entry_price, sl_price, tp_price):
         def safe_float(val):
