@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 if sys.stdout.encoding != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     
-fuso_brasilia = timezone(timedelta(hours=-3))
+fuso_brasilia = datetime.timezone(datetime.timedelta(hours=-3))
 load_dotenv()
 
 # --- VARIÁVEIS GLOBAIS ---
