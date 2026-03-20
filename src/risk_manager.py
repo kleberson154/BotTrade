@@ -6,6 +6,9 @@ class RiskManager:
     # =========================================================
     def __init__(self):
         self.max_positions = 3  
+        self.total_pnl_bruto = 0.0
+        self.total_fees = 0.0
+        self.trades_history = []
         
         self.stats = {
             "total_trades": 0,
@@ -58,6 +61,36 @@ class RiskManager:
     def get_total_pnl(self):
         """Retorna a soma de todo o PnL acumulado no histórico"""
         return sum(self.stats["pnl_history"].values())
+    
+    def add_historical_trade(self, symbol, pnl_net):
+        if symbol not in self.performance:
+            self.performance[symbol] = []
+            self.performance[symbol].append(pnl_net)
+            self.total_pnl += pnl_net # Soma ao PnL acumulado do bot
+    
+    def add_trade_result(self, symbol, pnl_bruto, fees):
+        pnl_net = pnl_bruto - fees
+        self.total_pnl_bruto += pnl_bruto
+        self.total_fees += fees
+        
+        trade_data = {
+            'symbol': symbol,
+            'pnl_net': pnl_net,
+            'is_win': pnl_net > 0,
+            'timestamp': datetime.datetime.now()
+        }
+        self.trades_history.append(trade_data)
+        return pnl_net
+
+    def get_performance_stats(self):
+        if not self.trades_history:
+            return 0, 0, 0
+        
+        wins = [t for t in self.trades_history if t['is_win']]
+        win_rate = (len(wins) / len(self.trades_history)) * 100
+        pnl_liquido_total = sum(t['pnl_net'] for t in self.trades_history)
+        
+        return len(self.trades_history), win_rate, pnl_liquido_total
 
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)

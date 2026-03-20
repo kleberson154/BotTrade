@@ -1,3 +1,4 @@
+import datetime
 import sys
 import io
 import os
@@ -219,6 +220,32 @@ def check_closed_trades():
                 log.info(f"📊 Novo trade contabilizado: {symbol} PnL: {pnl}")
     except Exception as e:
         log.error(f"Erro ao checar trades fechados: {e}")
+    
+def sync_historical_pnl(start_date="2026-03-18"):
+    try:
+        # Timestamp em milissegundos
+        start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
+        log.info(f"🔍 Sincronizando histórico desde {start_date}...")
+
+        processed_orders = set()
+        
+        for symbol in SYMBOLS:
+            resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
+            
+            if resp['retCode'] == 0:
+                for t in reversed(resp['result']['list']):
+                    order_id = t['orderId']
+                    if order_id not in processed_orders:
+                        pnl_bruto = float(t['closedPnl'])
+                        # Cálculo Real de Taxas: (Valor Entrada + Valor Saída) * Taxa
+                        fees = (float(t['cumEntryValue']) + float(t['cumExitValue'])) * 0.0006
+                        
+                        risk_mgr.add_trade_result(symbol, pnl_bruto, fees)
+                        processed_orders.add(order_id)
+        
+        log.info("✅ Histórico sincronizado com sucesso.")
+    except Exception as e:
+        log.error(f"❌ Erro na sincronização: {e}")
 
 def prepare_leverage(symbol, leverage_value):
     try:
@@ -259,8 +286,8 @@ def create_and_subscribe_websocket():
     return ws_client
 
 def start_bot():
-    # Declaramos globais para o Python saber que estamos usando as variáveis de fora
-    global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws 
+    # Adicionamos as globais que estavam faltando para o dashboard funcionar
+    global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws, cache_balance, message_queue, risk_mgr
     
     erros_seguidos = 0
     
@@ -271,21 +298,33 @@ def start_bot():
                 get_cached_data()
                 check_closed_trades()
 
-                # Heartbeat a cada 1 hora
-                if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
+                # Heartbeat a cada 1 hora com Dashboard Completo
+                if timestamp_atual - ULTIMO_CHECK_VIVO >= 60:
                     if SALDO_INICIAL_DIA is None: 
                         SALDO_INICIAL_DIA = cache_balance.get('total', 0)
                     
-                    pnl_dia = risk_mgr.get_total_pnl()
-                    status_fila = "⚠️ ATRASADO" if message_queue.qsize() > 50 else "Normal"
-                    emoji_pnl = "📈" if pnl_dia >= 0 else "📉"
+                    # Pegamos as estatísticas reais do RiskManager (Líquidas)
+                    total_trades, win_rate, pnl_net = risk_mgr.get_performance_stats()
+                    
+                    status_cor = "🟢" if pnl_net >= 0 else "🔴"
+                    queue_size = message_queue.qsize()
+                    status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
 
-                    notifier.send_message(
-                        f"🤖 *Heartbeat*\n"
-                        f"💰 Saldo: ${cache_balance['total']:.2f}\n"
-                        f"{emoji_pnl} PnL Dia: ${pnl_dia:.2f}\n"
-                        f"📡 Fila: {message_queue.qsize()} ({status_fila})"
+                    # Montagem do Dashboard Profissional
+                    dashboard_msg = (
+                        f"📊 *DASHBOARD DE PERFORMANCE*\n"
+                        f"📅 Período: Desde 18/03\n"
+                        f"---\n"
+                        f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
+                        f"📈 *Win Rate:* `{win_rate:.1f}%` ({total_trades} trades)\n"
+                        f"💸 *Taxas Est.:* `-${risk_mgr.total_fees:.2f}`\n"
+                        f"---\n"
+                        f"🏦 *Saldo USDT:* `${cache_balance.get('total', 0):.2f}`\n"
+                        f"📡 *Fila:* `{queue_size}` ({status_fila})\n"
+                        f"🕒 *Atualiz.:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
                     )
+
+                    notifier.send_message(dashboard_msg)
                     ULTIMO_CHECK_VIVO = timestamp_atual
 
                 # Verificação de conexão do WebSocket
@@ -294,7 +333,7 @@ def start_bot():
                     ws = create_and_subscribe_websocket()
 
                 gc.collect() 
-                erros_seguidos = 0 # Reseta contador de erros se chegou aqui
+                erros_seguidos = 0 
                 time.sleep(15) 
 
             except KeyboardInterrupt: 
@@ -305,14 +344,13 @@ def start_bot():
                 log.error(f"Erro Loop ({erros_seguidos}/5): {e}")
                 time.sleep(5)
                 
-                # Se der 5 erros seguidos no loop interno, explode para o PM2 reiniciar tudo
                 if erros_seguidos > 5:
                     raise Exception("Múltiplos erros no loop interno. Reiniciando bot...")
 
     except Exception as e:
         print(f"❌ Erro Crítico: {e}")
         import sys
-        sys.exit(1) # PM2 vai ler isso e dar o restart
+        sys.exit(1)
 
 # =========================================================
 # 4. START DO BOT (BLOCO FINAL)
@@ -337,4 +375,5 @@ if __name__ == "__main__":
 
     ws = create_and_subscribe_websocket()
     notifier.send_message("🤖 Bot Ativo - Monitorando sinais...")
+    sync_historical_pnl("2026-03-18")
     start_bot()
