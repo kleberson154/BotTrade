@@ -263,28 +263,33 @@ class TradingStrategy:
 
     def load_historical_data(self, timeframe, candles):
         """
-        Carrega dados históricos formatados como dicionários.
+        Carrega dados históricos formatados como lista de dicionários.
         """
         try:
-            # Se 'candles' já for uma lista de dicionários vinda da main, 
-            # o Pandas converte direto e corretamente.
+            # Converte a lista de dicionários diretamente em um DataFrame
             df = pd.DataFrame(candles)
             
-            # Garante que as colunas essenciais existam
+            # Lista de colunas que o bot PRECISA para os cálculos
             required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            
+            # Garante que todas as colunas existam (evita o erro 'open')
             for col in required_columns:
                 if col not in df.columns:
-                    # Se faltar algo, preenchemos com 0 ou tratamos para não quebrar
                     df[col] = 0.0
+
+            # Garante que os tipos sejam numéricos (float)
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
 
             if timeframe == "1m":
                 self.data_1m = df
             else:
                 self.data_15m = df
                 
+            # log.info(f"✅ Histórico {timeframe} carregado para {self.symbol}")
+
         except Exception as e:
-            # Use o seu logger aqui se disponível, ou print para debug rápido
-            print(f"Erro ao carregar histórico em {self.symbol}: {e}")
+            print(f"❌ Erro crítico ao carregar histórico em {self.symbol}: {e}")
         
     def sync_position(self, side, entry_price, sl_price, tp_price):
         def safe_float(val):

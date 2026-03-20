@@ -243,54 +243,41 @@ def check_closed_trades():
     
 def sync_historical_pnl(start_date="2026-03-18"):
     try:
-        # Uso do caminho completo para evitar erro de NameError/AttributeError
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
-        log.info(f"🔍 Sincronizando histórico desde {start_date}...")
+        log.info(f"🔍 Sincronizando histórico silenciosamente desde {start_date}...")
 
         processed_orders = set()
         total_recuperado = 0
         
         for symbol in SYMBOLS:
-            # Buscamos o histórico na Bybit
             resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
             
             if resp['retCode'] == 0:
-                # Invertemos para processar do mais antigo para o mais novo
                 for t in reversed(resp['result']['list']):
                     order_id = t['orderId']
                     
                     if order_id not in processed_orders:
                         pnl_bruto = float(t['closedPnl'])
-                        # Taxas estimadas (0.06% por ordem = 0.12% total)
                         fees = (float(t['cumEntryValue']) + float(t['cumExitValue'])) * 0.0006
                         pnl_liquido = pnl_bruto - fees
                         
-                        # --- ATUALIZAÇÃO DO RISK MANAGER ---
-                        # 1. Atualiza o PnL acumulado da moeda específica
+                        # ATUALIZAÇÃO INTERNA (Sem enviar Telegram)
                         risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
-                        
-                        # 2. Atualiza contadores globais para o Win Rate
                         risk_mgr.stats['total_trades'] += 1
+                        
                         if pnl_liquido > 0:
                             risk_mgr.stats['wins'] += 1
-                            mensagem = f"🎯 [ALVO ATINGIDO] {symbol}\n💰 Lucro Líquido: ${pnl_liquido:.2f}\n🚀"
                         else:
                             risk_mgr.stats['losses'] += 1
-                            mensagem = f"🛑 [STOP LOSS] {symbol}\n📉 Perda: ${pnl_liquido:.2f}"
                             
-                        # 3. Adiciona aos totais financeiros do objeto
                         risk_mgr.total_pnl_bruto += pnl_bruto
                         risk_mgr.total_fees += fees
                         
                         processed_orders.add(order_id)
                         total_recuperado += 1
-                        notifier.send_message(mensagem)
         
-        log.info(f"✅ Sincronização concluída: {total_recuperado} trades processados.")
-        
-        # Imprime o dashboard no terminal logo após sincronizar para conferência
-        risk_mgr._print_terminal_dashboard()
-
+        log.info(f"✅ Sincronização concluída: {total_recuperado} trades recuperados.")
+        # Apenas o dashboard final será enviado no loop principal
     except Exception as e:
         log.error(f"❌ Erro na sincronização: {e}")
 
