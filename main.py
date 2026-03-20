@@ -385,6 +385,28 @@ def start_bot():
         print(f"❌ Erro Crítico: {e}")
         import sys
         sys.exit(1)
+    
+    
+# =========================================================
+# 0. TESTE DE SANIDADE E FUNÇÕES AUXILIARES
+# =========================================================    
+def debug_sanity_check():
+    log.info("🔍 --- TESTE DE SANIDADE DO SISTEMA ---")
+    for symbol in SYMBOLS:
+        strat = strategies[symbol]
+        df = strat.data_1m
+        if df is not None and not df.empty:
+            has_open = 'open' in df.columns
+            last_price = df['close'].iloc[-1]
+            # Simula o cálculo da volatilidade
+            recent = df.tail(20)
+            volat = (abs(recent['close'] - recent['open']) / recent['open']).mean() if has_open else 0
+            
+            status = "✅ OK" if has_open and volat > 0 else "❌ FALHA"
+            log.info(f"Symbol: {symbol} | Open Col: {has_open} | Volat: {volat:.5f} | Status: {status}")
+        else:
+            log.warning(f"Symbol: {symbol} | ⚠️ Sem dados no DataFrame 1m")
+    log.info("🔍 ------------------------------------")
 
 # =========================================================
 # 4. START DO BOT (BLOCO FINAL)
@@ -425,4 +447,5 @@ if __name__ == "__main__":
     ws = create_and_subscribe_websocket()
     notifier.send_message("🤖 Bot Ativo - Monitorando sinais...")
     sync_historical_pnl("2026-03-18")
+    debug_sanity_check()
     start_bot()
