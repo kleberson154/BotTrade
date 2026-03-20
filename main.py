@@ -222,27 +222,51 @@ def check_closed_trades():
     
 def sync_historical_pnl(start_date="2026-03-18"):
     try:
-        # Timestamp em milissegundos
+        # Uso do caminho completo para evitar erro de NameError/AttributeError
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
         log.info(f"🔍 Sincronizando histórico desde {start_date}...")
 
         processed_orders = set()
+        total_recuperado = 0
         
         for symbol in SYMBOLS:
+            # Buscamos o histórico na Bybit
             resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
             
             if resp['retCode'] == 0:
+                # Invertemos para processar do mais antigo para o mais novo
                 for t in reversed(resp['result']['list']):
                     order_id = t['orderId']
+                    
                     if order_id not in processed_orders:
                         pnl_bruto = float(t['closedPnl'])
-                        # Cálculo Real de Taxas: (Valor Entrada + Valor Saída) * Taxa
+                        # Taxas estimadas (0.06% por ordem = 0.12% total)
                         fees = (float(t['cumEntryValue']) + float(t['cumExitValue'])) * 0.0006
+                        pnl_liquido = pnl_bruto - fees
                         
-                        risk_mgr.add_trade_result(symbol, pnl_bruto, fees)
+                        # --- ATUALIZAÇÃO DO RISK MANAGER ---
+                        # 1. Atualiza o PnL acumulado da moeda específica
+                        risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
+                        
+                        # 2. Atualiza contadores globais para o Win Rate
+                        risk_mgr.stats['total_trades'] += 1
+                        if pnl_liquido > 0:
+                            risk_mgr.stats['wins'] += 1
+                        else:
+                            risk_mgr.stats['losses'] += 1
+                            
+                        # 3. Adiciona aos totais financeiros do objeto
+                        risk_mgr.total_pnl_bruto += pnl_bruto
+                        risk_mgr.total_fees += fees
+                        
                         processed_orders.add(order_id)
+                        total_recuperado += 1
         
-        log.info("✅ Histórico sincronizado com sucesso.")
+        log.info(f"✅ Sincronização concluída: {total_recuperado} trades processados.")
+        
+        # Imprime o dashboard no terminal logo após sincronizar para conferência
+        risk_mgr._print_terminal_dashboard()
+
     except Exception as e:
         log.error(f"❌ Erro na sincronização: {e}")
 
@@ -298,7 +322,7 @@ def start_bot():
                 check_closed_trades()
 
                 # Heartbeat a cada 1 hora com Dashboard Completo
-                if timestamp_atual - ULTIMO_CHECK_VIVO >= 60:
+                if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
                     if SALDO_INICIAL_DIA is None: 
                         SALDO_INICIAL_DIA = cache_balance.get('total', 0)
                     
