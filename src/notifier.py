@@ -21,30 +21,31 @@ class TelegramNotifier:
         except Exception as e:
             print(f"⚠️ Erro ao enviar Telegram: {e}")
             
-    def send_heartbeat(risk_mgr, cache_balance, message_queue):
-        """
-        Agora a função recebe as dependências de fora para dentro.
-        """
-        total_trades, win_rate, pnl_net = risk_mgr.get_performance_stats()
-
-        # Validação simples para evitar erro se o saldo ainda não carregou
+    def send_heartbeat(self, risk_mgr, cache_balance, message_queue):
+        # RECEBENDO AS 6 VARIÁVEIS (Ordem: total, wins, prot, wr, sr, pnl_net)
+        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
+    
+        # Validação para o saldo
         balance_total = cache_balance.get('total', 0.0)
-
+    
         status_cor = "🟢" if pnl_net >= 0 else "🔴"
         queue_size = message_queue.qsize()
         status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
-
+    
         msg = (
             f"📊 *DASHBOARD DE PERFORMANCE*\n"
             f"📅 Período: Desde 18/03\n"
             f"---\n"
             f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
-            f"📈 *Win Rate:* `{win_rate:.1f}%` ({total_trades} trades)\n"
+            f"📈 *Win Rate:* `{wr:.1f}%` 🎯\n"
+            f"🛡️ *Sobrevivência:* `{sr:.1f}%` (Proteção)\n"
+            f"---\n"
+            f"✅ Wins: `{wins}` | 🛡️ BE: `{prot}` | ❌ Losses: `{total - wins - prot}`\n"
             f"💸 *Taxas Est.:* `-${risk_mgr.total_fees:.2f}`\n"
             f"---\n"
             f"🏦 *Saldo USDT:* `${balance_total:.2f}`\n"
             f"📡 *Fila:* `{queue_size}` ({status_fila})\n"
             f"🕒 *Atualiz.:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
         )
-
-        notifier.send_message(msg)
+    
+        self.send_message(msg)

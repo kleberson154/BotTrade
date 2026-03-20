@@ -112,19 +112,6 @@ class RiskManager:
         self.trades_history.append(trade_data)
         return pnl_net
 
-    def get_performance_stats(self):
-        """Calcula estatísticas baseadas no histórico real injetado"""
-        total_trades = self.stats.get('total_trades', 0)
-        wins = self.stats.get('wins', 0)
-
-        # Win Rate baseado nos contadores que o sync_historical_pnl atualiza
-        win_rate = (wins / max(1, total_trades)) * 100
-
-        # PnL Líquido somando o histórico de todas as moedas
-        pnl_net_total = sum(self.stats["pnl_history"].values())
-
-        return total_trades, win_rate, pnl_net_total
-
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)
     # =========================================================
