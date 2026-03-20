@@ -49,22 +49,22 @@ class RiskManager:
         """Exibe a performance acumulada desde o dia 18/03 no terminal"""
         # Buscamos as estatísticas globais que o sync_historical_pnl preencheu
         total_trades, win_rate, pnl_net_total = self.get_performance_stats()
-        
+
         print("\n" + "═"*40)
         print(f" 📊  DASHBOARD DE PERFORMANCE (Desde 18/03)")
         print(f" 📈  Win Rate: {win_rate:.1f}% | 🔄 Total: {total_trades} trades")
         print(f" 💰  PnL Líquido Total: ${pnl_net_total:.2f}")
         print("-" * 40)
-    
+
         # Itera sobre o histórico de cada moeda que foi sincronizado
         # Aqui assumimos que seu self.stats['pnl_history'] agora armazena o PnL acumulado
         for sym, val in self.stats["pnl_history"].items():
             if val == 0: continue # Pula moedas que não operaram
-            
+
             cor = "🟢" if val >= 0 else "🔴"
             # Mostra o PnL já descontado as taxas que calculamos na sincronização
             print(f" {cor} {sym.ljust(10)}: ${val:>8.2f}")
-            
+
         print("═"*40 + "\n")
         
     def get_total_pnl(self):
@@ -92,14 +92,17 @@ class RiskManager:
         return pnl_net
 
     def get_performance_stats(self):
-        if not self.trades_history:
-            return 0, 0, 0
+        """Calcula estatísticas baseadas no histórico real injetado"""
+        total_trades = self.stats.get('total_trades', 0)
+        wins = self.stats.get('wins', 0)
         
-        wins = [t for t in self.trades_history if t['is_win']]
-        win_rate = (len(wins) / len(self.trades_history)) * 100
-        pnl_liquido_total = sum(t['pnl_net'] for t in self.trades_history)
+        # Win Rate baseado nos contadores que o sync_historical_pnl atualiza
+        win_rate = (wins / max(1, total_trades)) * 100
         
-        return len(self.trades_history), win_rate, pnl_liquido_total
+        # PnL Líquido somando o histórico de todas as moedas
+        pnl_net_total = sum(self.stats["pnl_history"].values())
+        
+        return total_trades, win_rate, pnl_net_total
 
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)

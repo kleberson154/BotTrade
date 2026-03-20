@@ -135,11 +135,14 @@ class TradingStrategy:
         # --- B) TRAILING STOP DINÂMICO ---
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
 
-        # Enforcamento gradual baseado no PnL
-        if pnl_pct < 0.02:
-            trail_dist = atr * 6.0 # Folga para respirar no início
-        else:
-            trail_dist = atr * 4.0 # Proteção agressiva no lucro
+        # NOVO LOGICA: Mais folga no início para fugir das taxas
+        if pnl_pct < 0.015:  # Enquanto o lucro for menor que 1.5%
+            # Aumentamos de 3.0 para 5.5. Isso dá um "respiro" enorme para a moeda oscilar
+            trail_dist = atr * 5.5  
+        elif pnl_pct < 0.03: # Entre 1.5% e 3% de lucro
+            trail_dist = atr * 4.0
+        else:                # Quando já estiver ganhando bem (> 3%)
+            trail_dist = atr * 2.5 # Aqui "enforcamos" para garantir o lucro gordo
 
         if self.side == "BUY":
             if not self.be_activated and pnl_pct >= 0.016:
