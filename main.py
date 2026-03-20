@@ -66,6 +66,7 @@ def handle_signal_logic(message):
 
     tf_key = "1m" if timeframe == "1" else "15m"
     strat.add_new_candle(tf_key, {
+        "open": float(candle["open"]),   # <--- ADICIONE ESTA LINHA
         "close": current_price,
         "high": float(candle["high"]),
         "low": float(candle["low"]),
@@ -409,9 +410,24 @@ if __name__ == "__main__":
         for tf, tf_id in [("1m", 1), ("15m", 15)]:
             hist = session.get_kline(category="linear", symbol=symbol, interval=tf_id, limit=200)
             if hist['retCode'] == 0:
-                candles = hist['result']['list']
-                candles.reverse()
-                strat.load_historical_data(tf, candles)
+                candles_raw = hist['result']['list']
+                
+                # Formatamos os dados corretamente antes de enviar para a Strategy
+                formatted_candles = []
+                for c in candles_raw:
+                    formatted_candles.append({
+                        "timestamp": int(c[0]),
+                        "open": float(c[1]),   # <--- AGORA O OPEN ESTÁ AQUI
+                        "high": float(c[2]),
+                        "low": float(c[3]),
+                        "close": float(c[4]),
+                        "volume": float(c[5])
+                    })
+                
+                # A Bybit manda do mais novo para o antigo, precisamos inverter
+                formatted_candles.reverse()
+                strat.load_historical_data(tf, formatted_candles)
+                
         log.info(f"✅ Pronto: {symbol}")
     
     sync_open_positions()

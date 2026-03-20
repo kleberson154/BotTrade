@@ -35,16 +35,21 @@ class TradingStrategy:
             if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
                 return "HOLD", 0
             
-            # --- NOVO FILTRO DE VOLATILIDADE SNIPER ---
-            # Calcula a variação média do corpo das velas (Open vs Close) nas últimas 20 velas
-            # Isso mede se a moeda está realmente se "mexendo" ou apenas lateralizando
-            recent_candles = self.data_1m.tail(20)
-            candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
-
-            # REGRA: Se a variação média for menor que 0.12% (0.0012), a moeda está morta.
-            # (Pode ajustar para 0.0015 se quiser ser ainda mais rigoroso)
-            if candle_variation < 0.0012:
-                # log.debug(f"💤 {self.symbol} sem volatilidade ({candle_variation:.4%})")
+            # --- FILTRO DE VOLATILIDADE SNIPER (VERSÃO CORRIGIDA) ---
+            try:
+                # Verifica se temos velas suficientes e se a coluna 'open' existe
+                if len(self.data_1m) >= 20 and 'open' in self.data_1m.columns:
+                    recent_candles = self.data_1m.tail(20)
+                    # Cálculo da variação média
+                    candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
+    
+                    if candle_variation < 0.0012:
+                        return "HOLD", 0
+                else:
+                    # Se não tem dados suficientes ou falta a coluna, aguarda o próximo ciclo
+                    return "HOLD", 0
+            except Exception as e:
+                log.error(f"Erro no cálculo de volatilidade ({self.symbol}): {e}")
                 return "HOLD", 0
             
             # 2. Cálculo de ATR e Volume no M1
