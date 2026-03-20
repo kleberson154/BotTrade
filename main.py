@@ -33,6 +33,7 @@ SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
 ULTIMO_CHECK_VIVO = 0 
 SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
+ULTIMO_CHECK_CALOR = 0
 
 # --- INICIALIZAÇÃO DE COMPONENTES GLOBAIS ---
 notifier = TelegramNotifier()
@@ -319,6 +320,38 @@ def create_and_subscribe_websocket():
         ws_client.kline_stream(interval=15, symbol=symbol, callback=on_message)
     return ws_client
 
+def check_market_heat():
+    """Mostra quais moedas estão esquentando e perto do Filtro Sniper"""
+    log.info("🔥 --- TERMÔMETRO DE VOLATILIDADE ---")
+    threshold = 0.0012  # Seu filtro atual
+    
+    for symbol in SYMBOLS:
+        strat = strategies[symbol]
+        df = strat.data_1m
+        
+        if df is not None and len(df) >= 20:
+            recent = df.tail(20)
+            # Cálculo da volatilidade real (corpo das velas)
+            volat = (abs(recent['close'] - recent['open']) / recent['open']).mean()
+            
+            # Cálculo de progresso para o gatilho
+            percent_of_threshold = (volat / threshold) * 100
+            
+            # Status Visual
+            if volat >= threshold:
+                status = "✅ DISPARADO (Operando)"
+                notifier.send_message(f"🚨 *Sinal de Calor:* {symbol}\nVolatilidade: {volat:.5f} ({percent_of_threshold:.1f}%)\nStatus: {status}")
+            elif percent_of_threshold > 80:
+                status = "🟠 QUASE LÁ (Esquentando)"
+                notifier.send_message(f"⚠️ *Quase no Sniper:* {symbol}\nVolatilidade: {volat:.5f} ({percent_of_threshold:.1f}%)\nStatus: {status}")
+            else:
+                status = "❄️ FRIO (Lateral)"
+                
+            log.info(f"{symbol:10} | Volat: {volat:.5f} ({percent_of_threshold:5.1f}%) | {status}")
+        else:
+            log.warning(f"{symbol:10} | ⚠️ Aguardando mais dados...")
+    log.info("-------------------------------------")
+
 def start_bot():
     # Adicionamos as globais que estavam faltando para o dashboard funcionar
     global ULTIMO_CHECK_VIVO, SALDO_INICIAL_DIA, ws, cache_balance, message_queue, risk_mgr
@@ -331,6 +364,10 @@ def start_bot():
                 timestamp_atual = time.time()
                 get_cached_data()
                 check_closed_trades()
+                
+                if timestamp_atual - ULTIMO_CHECK_CALOR >= 900:
+                    check_market_heat()
+                    ULTIMO_CHECK_CALOR = timestamp_atual
 
                 # Heartbeat a cada 1 hora com Dashboard Completo
                 if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
