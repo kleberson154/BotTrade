@@ -375,30 +375,7 @@ def start_bot():
                 check_closed_trades()
                 
                 if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
-                    # ALTERE ESTA LINHA ABAIXO PARA RECEBER OS 6 VALORES:
-                    total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
-
-                    status_cor = "🟢" if pnl_net >= 0 else "🔴"
-                    queue_size = message_queue.qsize()
-                    status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
-
-                    # Montagem do Dashboard com as novas variáveis
-                    dashboard_msg = (
-                        f"📊 *DASHBOARD DE PERFORMANCE*\n"
-                        f"📅 Período: Desde 18/03\n"
-                        f"----- \n"
-                        f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
-                        f"📈 *Win Rate:* `{wr:.1f}%` 🎯\n"
-                        f"🛡️ *Sobrevivência:* `{sr:.1f}%` (Proteção)\n"
-                        f"----- \n"
-                        f"✅ Wins: `{wins}` | 🛡️ BE: `{prot}` | ❌ Losses: `{total - wins - prot}`\n"
-                        f"💸 *Taxas Est.:* `-${risk_mgr.total_fees:.2f}`\n"
-                        f"--- \n"
-                        f"🏦 *Saldo USDT:* `${cache_balance.get('total', 0):.2f}`\n"
-                        f"🕒 *Atualiz.:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
-                    )
-
-                    notifier.send_message(dashboard_msg)
+                    notifier.send_heartbeat(risk_mgr, cache_balance, message_queue)
                     ULTIMO_CHECK_VIVO = timestamp_atual
 
                 # Verificação de conexão do WebSocket
