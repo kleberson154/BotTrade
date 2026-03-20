@@ -52,7 +52,7 @@ cache_positions = {"data": [], "last_update": 0}
 # =========================================================
 
 def handle_signal_logic(message):
-    """Processa dados do WebSocket e decide entradas/saídas"""
+    """Processa dados do WebSocket e decide entradas/saídas com Filtro Sniper"""
     if "data" not in message: return
     
     topic = message.get("topic", "")
@@ -67,7 +67,7 @@ def handle_signal_logic(message):
 
     tf_key = "1m" if timeframe == "1" else "15m"
     strat.add_new_candle(tf_key, {
-        "open": float(candle["open"]),   # <--- ADICIONE ESTA LINHA
+        "open": float(candle["open"]),
         "close": current_price,
         "high": float(candle["high"]),
         "low": float(candle["low"]),
@@ -79,17 +79,34 @@ def handle_signal_logic(message):
         # --- A) MONITORAMENTO DE POSIÇÃO ATIVA ---
         if strat.is_positioned:
             status = strat.monitor_protection(current_price)
-            
             if status == "UPDATE_SL":
                 update_remote_sl(symbol, strat.sl_price)
             elif status == "PARTIAL_EXIT":
                 execute_partial_tp(symbol, strat, current_price)
         
-        # --- B) BUSCA POR NOVOS SINAIS ---
+        # --- B) BUSCA POR NOVOS SINAIS (COM FILTRO SNIPER) ---
         else:
-            signal, current_atr = strat.check_signal()
-            if signal in ["BUY", "SELL"]:
-                execute_new_trade(symbol, signal, current_price, current_atr)
+            # 1. Calculamos a volatilidade atual para decidir se abrimos o sinal
+            df = strat.data_1m
+            if df is not None and len(df) >= 20:
+                recent = df.tail(20)
+                volat = (abs(recent['close'] - recent['open']) / recent['open']).mean()
+                threshold = 0.0012  # Seu Filtro Sniper
+                
+                # SÓ PROCURA SINAL SE A VOLATILIDADE FOR MAIOR QUE O FILTRO
+                if volat >= threshold:
+                    signal, current_atr = strat.check_signal()
+                    
+                    if signal in ["BUY", "SELL"]:
+                        log.info(f"🎯 SNIPER: Volatilidade confirmada ({volat:.5f}) para {symbol}. Disparando {signal}!")
+                        execute_new_trade(symbol, signal, current_price, current_atr)
+                    else:
+                        # Este log explica por que a OP disparou mas não abriu trade:
+                        log.warning(f"⚠️ {symbol}: Volatilidade alta ({volat:.5f}), mas estratégia não confirmou sinal.")
+                else:
+                    # Opcional: log para mostrar que o mercado está frio (comentado para não sujar o terminal)
+                    # log.info(f"❄️ {symbol} frio: {volat:.5f}")
+                    pass
 
 # =========================================================
 # 2. FUNÇÕES DE EXECUÇÃO E API
