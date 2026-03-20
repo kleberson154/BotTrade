@@ -3,6 +3,11 @@ import requests
 import os
 import datetime
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
+
 class TelegramNotifier:
     def __init__(self):
         self.token = os.getenv("TELEGRAM_TOKEN")
@@ -31,6 +36,11 @@ class TelegramNotifier:
         status_cor = "🟢" if pnl_net >= 0 else "🔴"
         queue_size = message_queue.qsize()
         status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
+
+        if ZoneInfo is not None:
+            horario_brasil = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime('%H:%M:%S')
+        else:
+            horario_brasil = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-3))).strftime('%H:%M:%S')
     
         msg = (
             f"📊 *DASHBOARD DE PERFORMANCE*\n"
@@ -45,7 +55,7 @@ class TelegramNotifier:
             f"---\n"
             f"🏦 *Saldo USDT:* `${balance_total:.2f}`\n"
             f"📡 *Fila:* `{queue_size}` ({status_fila})\n"
-            f"🕒 *Atualiz.:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
+            f"🕒 *Atualiz.:* `{horario_brasil}`"
         )
     
         self.send_message(msg)
