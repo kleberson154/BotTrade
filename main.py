@@ -377,6 +377,10 @@ def start_bot():
                 if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600:
                     notifier.send_heartbeat(risk_mgr, cache_balance, message_queue)
                     ULTIMO_CHECK_VIVO = timestamp_atual
+                    
+                if timestamp_atual - ULTIMO_CHECK_CALOR >= 1800:
+                    check_market_heat()
+                    ULTIMO_CHECK_CALOR = timestamp_atual
 
                 # Verificação de conexão do WebSocket
                 if not ws.is_connected():
