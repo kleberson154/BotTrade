@@ -68,26 +68,25 @@ class RiskManager:
         return total, wins, protected, win_rate, survival_rate, pnl_net
 
     def _print_terminal_dashboard(self):
-        """Exibe a performance acumulada desde o dia 18/03 no terminal"""
-        # Buscamos as estatísticas globais que o sync_historical_pnl preencheu
-        total_trades, win_rate, pnl_net_total = self.get_performance_stats()
+        """Exibe a performance acumulada detalhada no terminal"""
+        # RECEBENDO OS 6 VALORES (Ordem correta: total, wins, prot, wr, sr, pnl_net)
+        total, wins, prot, wr, sr, pnl_net = self.get_performance_stats()
 
-        print("\n" + "═"*40)
+        print("\n" + "═"*45)
         print(f" 📊  DASHBOARD DE PERFORMANCE (Desde 18/03)")
-        print(f" 📈  Win Rate: {win_rate:.1f}% | 🔄 Total: {total_trades} trades")
-        print(f" 💰  PnL Líquido Total: ${pnl_net_total:.2f}")
-        print("-" * 40)
+        print(f" 📈  Win Rate Real: {wr:5.1f}% | 🛡️ Sobrevivência: {sr:5.1f}%")
+        print(f" 🔄  Total: {total:3} (✅:{wins} | 🛡️:{prot} | ❌:{total-wins-prot})")
+        print(f" 💰  PnL Líquido Total: ${pnl_net:8.2f}")
+        print("-" * 45)
 
-        # Itera sobre o histórico de cada moeda que foi sincronizado
-        # Aqui assumimos que seu self.stats['pnl_history'] agora armazena o PnL acumulado
+        # Itera sobre o histórico de cada moeda
         for sym, val in self.stats["pnl_history"].items():
-            if val == 0: continue # Pula moedas que não operaram
+            if abs(val) < 0.0001: continue # Pula moedas sem atividade real
 
             cor = "🟢" if val >= 0 else "🔴"
-            # Mostra o PnL já descontado as taxas que calculamos na sincronização
-            print(f" {cor} {sym.ljust(10)}: ${val:>8.2f}")
+            print(f" {cor} {sym.ljust(12)}: ${val:>10.2f}")
 
-        print("═"*40 + "\n")
+        print("═"*45 + "\n")
         
     def get_total_pnl(self):
         """Retorna a soma de todo o PnL acumulado no histórico"""
