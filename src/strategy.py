@@ -136,14 +136,14 @@ class TradingStrategy:
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
 
         # Enforcamento gradual baseado no PnL
-        if pnl_pct < 0.015:
-            trail_dist = atr * 4.5 # Folga para respirar no início
+        if pnl_pct < 0.02:
+            trail_dist = atr * 6.0 # Folga para respirar no início
         else:
-            trail_dist = atr * 3.0 # Proteção agressiva no lucro
+            trail_dist = atr * 4.0 # Proteção agressiva no lucro
 
         if self.side == "BUY":
-            if not self.be_activated and pnl_pct >= 0.014:
-                new_sl = self.entry_price * 1.0005 
+            if not self.be_activated and pnl_pct >= 0.016:
+                new_sl = self.entry_price * 1.002 
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
