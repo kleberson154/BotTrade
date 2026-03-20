@@ -4,7 +4,6 @@ import io
 import os
 import time
 import gc
-from datetime import timezone, timedelta
 from queue import Queue
 from threading import Thread
 
@@ -224,7 +223,7 @@ def check_closed_trades():
 def sync_historical_pnl(start_date="2026-03-18"):
     try:
         # Timestamp em milissegundos
-        start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
+        start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
         log.info(f"🔍 Sincronizando histórico desde {start_date}...")
 
         processed_orders = set()
