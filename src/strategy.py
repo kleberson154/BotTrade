@@ -90,38 +90,53 @@ class TradingStrategy:
             # AJUSTE 2: Lógica de Pontuação (Score >= 2 já permite entrada se volume estiver forte)
             # --- LÓGICA DE COMPRA (LONG) ---
             if current_price > ema_200_15m:
-                if rsi_1m < 50: score += 1 # RSI menos restritivo (era 45)
-                if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
-                if current_price < (ema_20_1m * 1.002): score += 1 # Aceita preço levemente acima da EMA20
+                reasons = []
+                if rsi_1m < 50: 
+                    score += 1
+                    reasons.append("RSI<50")
+                if macd_line.iloc[-1] > macd_signal.iloc[-1]: 
+                    score += 1
+                    reasons.append("MACD_Cross")
+                if current_price < (ema_20_1m * 1.002): 
+                    score += 1
+                    reasons.append("Near_EMA20")
                 
                 if score >= 2 and volume_ok:
+                    # Filtros de Direção e Exaustão
                     if current_price <= last_price: return "HOLD", 0
                     
-                    # AJUSTE 3: Filtro de corpo de vela mais largo (3.5x a média)
                     body_size = abs(current_price - last_price)
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 3.5): 
-                        log.info(f"🚫 {self.symbol} ignorado: Vela de exaustão detectada.")
-                        return "HOLD", 0
+                    if body_size > (avg_body * 3.5): return "HOLD", 0
                     
-                    self.notifier.send_message(f"🚀 [SINAL COMPRA] {self.symbol} - Trend M15 OK | Score: {score}")
+                    msg = f"🚀 [COMPRA] {self.symbol} | Score: {score} ({', '.join(reasons)}) | Vol: OK"
+                    self.notifier.send_message(msg)
+                    log.info(msg)
                     return "BUY", atr
 
             # --- LÓGICA DE VENDA (SHORT) ---
             elif current_price < ema_200_15m:
-                if rsi_1m > 50: score += 1 # RSI menos restritivo (era 55)
-                if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
-                if current_price > (ema_20_1m * 0.998): score += 1
+                reasons = []
+                if rsi_1m > 50: 
+                    score += 1
+                    reasons.append("RSI>50")
+                if macd_line.iloc[-1] < macd_signal.iloc[-1]: 
+                    score += 1
+                    reasons.append("MACD_Cross")
+                if current_price > (ema_20_1m * 0.998): 
+                    score += 1
+                    reasons.append("Near_EMA20")
                 
                 if score >= 2 and volume_ok:
                     if current_price >= last_price: return "HOLD", 0
                     
                     body_size = abs(current_price - last_price)
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 3.5): 
-                        return "HOLD", 0
+                    if body_size > (avg_body * 3.5): return "HOLD", 0
 
-                    self.notifier.send_message(f"🚀 [SINAL VENDA] {self.symbol} - Trend M15 OK | Score: {score}")
+                    msg = f"🔻 [VENDA] {self.symbol} | Score: {score} ({', '.join(reasons)}) | Vol: OK"
+                    self.notifier.send_message(msg)
+                    log.info(msg)
                     return "SELL", atr
 
             return "HOLD", 0 
