@@ -29,30 +29,28 @@ class TradingStrategy:
     # 2. LÓGICA DE SINAL (ESTRATÉGIA COM FILTRO M15)
     # =========================================================
     def check_signal(self):
-        """Analisa indicadores e retorna (Sinal, ATR)"""
+        """Analisa indicadores e retorna (Sinal, ATR) com filtros otimizados"""
         try:
-            # 1. Filtros de Segurança Básicos (M15 precisa de 200 períodos para a EMA)
+            # 1. Filtros de Segurança Básicos
             if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
                 return "HOLD", 0
             
-            # --- FILTRO DE VOLATILIDADE SNIPER (VERSÃO CORRIGIDA) ---
+            # --- FILTRO DE VOLATILIDADE SNIPER ---
             try:
-                # Verifica se temos velas suficientes e se a coluna 'open' existe
                 if len(self.data_1m) >= 20 and 'open' in self.data_1m.columns:
                     recent_candles = self.data_1m.tail(20)
-                    # Cálculo da variação média
                     candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
 
+                    # Mantive o threshold de 0.12% para evitar "ruído" lateral
                     if candle_variation < 0.0012:
                         return "HOLD", 0
                 else:
-                    # Se não tem dados suficientes ou falta a coluna, aguarda o próximo ciclo
                     return "HOLD", 0
             except Exception as e:
                 log.error(f"Erro no cálculo de volatilidade ({self.symbol}): {e}")
                 return "HOLD", 0
             
-            # 2. Cálculo de ATR e Volume no M1
+            # 2. Cálculos Base
             atr_series = self.calculate_atr(self.data_1m, 14)
             if len(atr_series) == 0: return "HOLD", 0
             
@@ -62,22 +60,21 @@ class TradingStrategy:
             current_volume = self.data_1m['volume'].iloc[-1]
             avg_volume = self.data_1m['volume'].tail(20).mean()
             
+            # Volume 10% acima da média (ajustado para ser mais sensível)
             volume_ok = current_volume > (avg_volume * 1.1)
 
             if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
                 return "HOLD", 0
 
-            # 3. Indicadores Técnicos - O FILTRO SNIPER (EMA 200 no M15)
+            # 3. Tendência de Fundo (M15)
             ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
-            
-            # Adicione isso logo após calcular a ema_200_15m
             distancia_ema = abs(current_price - ema_200_15m) / ema_200_15m
 
-            # Se o preço estiver MUITO longe da EMA 200 (> 5%), o risco de correção é alto.
-            limite_exaustao = 0.03 if self.symbol in ["XRPUSDT", "ADAUSDT"] else 0.05
+            # AJUSTE 1: Limite de exaustão mais tolerante (5% para todos, ou 6% para voláteis)
+            limite_exaustao = 0.05 if self.symbol in ["XRPUSDT", "ADAUSDT"] else 0.07
 
             if distancia_ema > limite_exaustao:
-                log.warning(f"⚠️ {self.symbol} esticado demais ({distancia_ema:.2%}). Limite: {limite_exaustao:.0%}")
+                log.warning(f"⚠️ {self.symbol} exausto ({distancia_ema:.2%}). Aguardando retorno à média.")
                 return "HOLD", 0
             
             # Indicadores do M1 para o gatilho
@@ -90,39 +87,41 @@ class TradingStrategy:
 
             score = 0
             
-            # --- LÓGICA DE COMPRA (LONG) - SÓ SE PREÇO > EMA 200 M15 ---
+            # AJUSTE 2: Lógica de Pontuação (Score >= 2 já permite entrada se volume estiver forte)
+            # --- LÓGICA DE COMPRA (LONG) ---
             if current_price > ema_200_15m:
-                if rsi_1m < 45: score += 1
+                if rsi_1m < 50: score += 1 # RSI menos restritivo (era 45)
                 if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
-                if current_price < ema_20_1m: score += 1
+                if current_price < (ema_20_1m * 1.002): score += 1 # Aceita preço levemente acima da EMA20
                 
-                if score >= 3 and volume_ok:
-                    # Filtros de Direção e Exaustão
+                if score >= 2 and volume_ok:
                     if current_price <= last_price: return "HOLD", 0
                     
+                    # AJUSTE 3: Filtro de corpo de vela mais largo (3.5x a média)
                     body_size = abs(current_price - last_price)
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 2.5): return "HOLD", 0
+                    if body_size > (avg_body * 3.5): 
+                        log.info(f"🚫 {self.symbol} ignorado: Vela de exaustão detectada.")
+                        return "HOLD", 0
                     
-                    self.notifier.send_message(f"🚀 [SINAL COMPRA] {self.symbol} alinhado com tendência M15")
-                    log.info(f"🚀 [SINAL COMPRA] {self.symbol} alinhado com tendência M15")
+                    self.notifier.send_message(f"🚀 [SINAL COMPRA] {self.symbol} - Trend M15 OK | Score: {score}")
                     return "BUY", atr
 
-            # --- LÓGICA DE VENDA (SHORT) - SÓ SE PREÇO < EMA 200 M15 ---
+            # --- LÓGICA DE VENDA (SHORT) ---
             elif current_price < ema_200_15m:
-                if rsi_1m > 55: score += 1
+                if rsi_1m > 50: score += 1 # RSI menos restritivo (era 55)
                 if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
-                if current_price > ema_20_1m: score += 1
+                if current_price > (ema_20_1m * 0.998): score += 1
                 
-                if score >= 3 and volume_ok:
+                if score >= 2 and volume_ok:
                     if current_price >= last_price: return "HOLD", 0
                     
                     body_size = abs(current_price - last_price)
                     avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 2.5): return "HOLD", 0
+                    if body_size > (avg_body * 3.5): 
+                        return "HOLD", 0
 
-                    self.notifier.send_message(f"🚀 [SINAL VENDA] {self.symbol} alinhado com tendência M15")
-                    log.info(f"🚀 [SINAL VENDA] {self.symbol} alinhado com tendência M15")
+                    self.notifier.send_message(f"🚀 [SINAL VENDA] {self.symbol} - Trend M15 OK | Score: {score}")
                     return "SELL", atr
 
             return "HOLD", 0 
@@ -151,60 +150,60 @@ class TradingStrategy:
 
         changed = False
         
-        # Cálculo de lucro atual (positivo para lucro, negativo para prejuízo)
+        # Cálculo de lucro atual
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
     
         # --- A) DEFINIÇÃO DA DISTÂNCIA DE TRAILING (ADAPTATIVA) ---
-        if pnl_pct < 0.015: 
-            trail_dist = atr * 5.5   # Mais folga no início para não ser stopado por ruído
-        elif pnl_pct < 0.03: 
-            trail_dist = atr * 4.0   # Encurta a distância quando o lucro cresce
+        # Ajustado para dar mais folga no início e ser mais agressivo no final
+        if pnl_pct < 0.01: 
+            trail_dist = atr * 6.0   # Folga extra no início (era 5.5)
+        elif pnl_pct < 0.025: 
+            trail_dist = atr * 4.0   
         else: 
-            trail_dist = atr * 2.5   # "Enforca" o preço para garantir o lucro gordo
+            trail_dist = atr * 2.0   # Enforca o preço no lucro alto (era 2.5)
 
         # --- B) LÓGICA DE PROTEÇÃO (COMPRA) ---
         if self.side == "BUY":
-            # 1. Break-even (Trava no lucro mínimo inicial)
-            if not self.be_activated and pnl_pct >= 0.010:
-                new_sl = self.entry_price * 1.0005
+            # 1. Break-even (Proteção antecipada)
+            if not self.be_activated and pnl_pct >= 0.007: # Ativa com 0.7% (era 1.0%)
+                new_sl = self.entry_price * 1.0003 # Taxas pagas + micro lucro
                 if new_sl > self.sl_price:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (COMPRA) em {new_sl:.4f}")
 
-            # 2. Trailing Stop (Sobe acompanhando o preço)
+            # 2. Trailing Stop
             trail_sl = current_price - trail_dist
             if trail_sl > self.sl_price:
-                # Verifica se a mudança é significativa (> 0.12%) para evitar spam na API
-                if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0012: 
+                # Mudança significativa (> 0.10%)
+                if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0010: 
                     self.sl_price = trail_sl
                     changed = True
 
         # --- C) LÓGICA DE PROTEÇÃO (VENDA) ---
         elif self.side == "SELL":
-            # 1. Break-even (Trava no lucro mínimo inicial)
-            if not self.be_activated and pnl_pct >= 0.014:
-                new_sl = self.entry_price * 0.9995
+            # 1. Break-even (Proteção antecipada no Short)
+            if not self.be_activated and pnl_pct >= 0.009: # 0.9% para Short devido à volatilidade
+                new_sl = self.entry_price * 0.9997
                 if new_sl < self.sl_price or self.sl_price == 0:
                     self.sl_price = new_sl
                     self.be_activated = True
                     changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even em {new_sl}")
+                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (VENDA) em {new_sl:.4f}")
 
-            # 2. Trailing Stop (Desce acompanhando o preço no Short)
+            # 2. Trailing Stop
             trail_sl = current_price + trail_dist
             if (self.sl_price == 0) or (trail_sl < self.sl_price):
-                # Verifica se a mudança é significativa (> 0.12%)
-                if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0012:
+                if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0010:
                     self.sl_price = trail_sl
                     changed = True
 
         # --- D) VERIFICAÇÃO DE SAÍDA PARCIAL ---
-        # Só retorna PARTIAL_EXIT se ainda não foi feita e atingiu o alvo
         if not self.partial_taken:
-            if (self.side == "BUY" and current_price >= self.entry_price * 1.012) or \
-               (self.side == "SELL" and current_price <= self.entry_price * 0.988):
+            # Alvo de parcial ajustado para 1.0% (garantir lucro rápido)
+            target_partial = 0.010 if self.side == "BUY" else 0.011
+            if pnl_pct >= target_partial:
                 return "PARTIAL_EXIT" 
     
         return "UPDATE_SL" if changed else None
