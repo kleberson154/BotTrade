@@ -65,6 +65,9 @@ def handle_signal_logic(message):
     strat = strategies.get(symbol)
     if not strat: return
 
+    # Identifica se o candle fechou (confirmado)
+    is_confirmado = candle.get("confirm", False)
+
     tf_key = "1m" if timeframe == "1" else "15m"
     strat.add_new_candle(tf_key, {
         "open": float(candle["open"]),
@@ -84,28 +87,24 @@ def handle_signal_logic(message):
             elif status == "PARTIAL_EXIT":
                 execute_partial_tp(symbol, strat, current_price)
         
-        # --- B) BUSCA POR NOVOS SINAIS (COM FILTRO SNIPER) ---
-        else:
-            # 1. Calculamos a volatilidade atual para decidir se abrimos o sinal
+        # --- B) BUSCA POR NOVOS SINAIS (SÓ NO FECHAMENTO DO CANDLE DE 1M) ---
+        elif is_confirmado:
+            # 1. Cálculo de Volatilidade (Filtro Sniper de 0.12%)
             df = strat.data_1m
             if df is not None and len(df) >= 20:
                 recent = df.tail(20)
                 volat = (abs(recent['close'] - recent['open']) / recent['open']).mean()
-                threshold = 0.0012  # Seu Filtro Sniper
+                threshold = 0.0012 
                 
-                # SÓ PROCURA SINAL SE A VOLATILIDADE FOR MAIOR QUE O FILTRO
                 if volat >= threshold:
+                    # Chame a sua Strategy que já contém o novo Filtro M15 e RSI 38/62
                     signal, current_atr = strat.check_signal()
                     
                     if signal in ["BUY", "SELL"]:
-                        log.info(f"🎯 SNIPER: Volatilidade confirmada ({volat:.5f}) para {symbol}. Disparando {signal}!")
+                        log.info(f"🎯 SNIPER: {symbol} disparou {signal}! Volat: {volat:.5f}")
                         execute_new_trade(symbol, signal, current_price, current_atr)
-                    else:
-                        # Este log explica por que a OP disparou mas não abriu trade:
-                        log.debug(f"🔍 {symbol}: Analisando indicadores técnicos...")
                 else:
-                    # Opcional: log para mostrar que o mercado está frio (comentado para não sujar o terminal)
-                    # log.info(f"❄️ {symbol} frio: {volat:.5f}")
+                    # Mercado muito parado para a estratégia sniper
                     pass
 
 # =========================================================
@@ -147,29 +146,47 @@ def execute_new_trade(symbol, signal, price, atr):
         log.error(f"Erro abertura {symbol}: {e}")
 
 def execute_partial_tp(symbol, strat, current_price):
-    """Executa a venda de 50% da posição para garantir lucro"""
+    """Executa o fechamento de 50% da posição e trava o lucro"""
     try:
-        pos_resp = session.get_positions(category="linear", symbol=symbol)
-        if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
-            pos = pos_resp['result']['list'][0]
-            current_qty = abs(float(pos.get('size', 0)))
-            if current_qty > 0:
-                q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-                qty_to_close = str(round(current_qty / 2, q_prec))
-                
-                side_exit = "Sell" if strat.side == "BUY" else "Buy"
-                session.place_order(
-                    category="linear", symbol=symbol, side=side_exit,
-                    orderType="Market", qty=str(qty_to_close), reduceOnly=True
-                )
-                strat.partial_taken = True
-                notifier.send_message(f"💰 *Partial TP:* {symbol} (50% fechado)")
-                log.info(f"DEBUG: Pos total: {current_qty} | Fechando: {qty_to_close}")
-                
-                pnl_estimado = (abs(strat.entry_price - current_price) / strat.entry_price) * (float(qty_to_close) * strat.entry_price)
-                risk_mgr.update_dashboard(symbol, pnl_estimado)
+        # 1. Verifica se já não fizemos a parcial nesta operação
+        if strat.partial_taken:
+            return
+
+        log.info(f"💰 [ALVO ATINGIDO] Iniciando Saída Parcial para {symbol} em {current_price}")
+
+        # 2. Pega a quantidade atual da posição (via API ou variável da classe)
+        # Exemplo: metade do lote original
+        qty_to_close = strat.current_qty / 2
+        
+        # 3. Envia a ordem de fechamento de MERCADO para a Bybit
+        # Aqui você usa a sua função de ordem existente, mas com o lado oposto
+        side_to_close = "SELL" if strat.side == "BUY" else "BUY"
+        
+        order = session.place_order(
+            category="linear",
+            symbol=symbol,
+            side=side_to_close,
+            orderType="Market",
+            qty=str(qty_to_close)
+        )
+
+        if order['retCode'] == 0:
+            # 4. ATUALIZA O ESTADO DO BOT
+            strat.partial_taken = True
+            strat.current_qty -= qty_to_close
+            
+            # 5. AJUSTE DE SEGURANÇA: Move o Stop para o Break-even IMEDIATAMENTE
+            # Isso garante que a outra metade nunca fique no prejuízo
+            new_sl = strat.entry_price * (1.0005 if strat.side == "BUY" else 0.9995)
+            strat.sl_price = new_sl
+            update_remote_sl(symbol, new_sl)
+            
+            strat.notifier.send_message(f"✅ {symbol}: Parcial de 50% executada! Stop movido para o Zero.")
+        else:
+            log.error(f"❌ Erro ao executar parcial em {symbol}: {order['retMsg']}")
+
     except Exception as e:
-        log.error(f"Erro parcial {symbol}: {e}")
+        log.error(f"🔥 Falha crítica na execução da parcial ({symbol}): {e}")
 
 def update_remote_sl(symbol, new_sl):
     try:

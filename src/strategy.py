@@ -29,121 +29,109 @@ class TradingStrategy:
     # 2. LÓGICA DE SINAL (ESTRATÉGIA COM FILTRO M15)
     # =========================================================
     def check_signal(self):
-        """Analisa indicadores e retorna (Sinal, ATR) com filtros otimizados"""
+        """Analisa rompimentos e pullbacks com Filtros de Exaustão e Confirmação M15"""
         try:
-            # 1. Filtros de Segurança Básicos
             if not self.is_market_safe() or len(self.data_1m) < 35 or len(self.data_15m) < 200:
                 return "HOLD", 0
             
-            # --- FILTRO DE VOLATILIDADE SNIPER ---
-            try:
-                if len(self.data_1m) >= 20 and 'open' in self.data_1m.columns:
-                    recent_candles = self.data_1m.tail(20)
-                    candle_variation = (abs(recent_candles['close'] - recent_candles['open']) / recent_candles['open']).mean()
-
-                    # Mantive o threshold de 0.12% para evitar "ruído" lateral
-                    if candle_variation < 0.0012:
-                        return "HOLD", 0
-                else:
-                    return "HOLD", 0
-            except Exception as e:
-                log.error(f"Erro no cálculo de volatilidade ({self.symbol}): {e}")
-                return "HOLD", 0
-            
-            # 2. Cálculos Base
-            atr_series = self.calculate_atr(self.data_1m, 14)
-            if len(atr_series) == 0: return "HOLD", 0
-            
-            atr = atr_series.iloc[-1]
+            # --- 1. CÁLCULOS BASE ---
             current_price = self.data_1m['close'].iloc[-1]
             last_price = self.data_1m['close'].iloc[-2]
             current_volume = self.data_1m['volume'].iloc[-1]
-            avg_volume = self.data_1m['volume'].tail(20).mean()
             
-            # Volume 10% acima da média (ajustado para ser mais sensível)
-            volume_ok = current_volume > (avg_volume * 1.1)
-
-            if atr <= 0 or (atr / current_price) < self.min_atr_threshold:
-                return "HOLD", 0
-
-            # 3. Tendência de Fundo (M15)
-            ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
-            distancia_ema = abs(current_price - ema_200_15m) / ema_200_15m
-
-            # AJUSTE 1: Limite de exaustão mais tolerante (5% para todos, ou 6% para voláteis)
-            limite_exaustao = 0.05 if self.symbol in ["XRPUSDT", "ADAUSDT"] else 0.07
-
-            if distancia_ema > limite_exaustao:
-                log.warning(f"⚠️ {self.symbol} exausto ({distancia_ema:.2%}). Aguardando retorno à média.")
-                return "HOLD", 0
+            # Mínima/Máxima 15m (Caixote)
+            minima_15m = self.data_1m['low'].tail(15).min()
+            maxima_15m = self.data_1m['high'].tail(15).max()
             
-            # Indicadores do M1 para o gatilho
+            # Volume e Indicadores
+            avg_vol_10 = self.data_1m['volume'].tail(10).mean()
+            pico_volume = current_volume > (avg_vol_10 * 2.2)
+            
+            atr = self.calculate_atr(self.data_1m, 14).iloc[-1]
             ema_20_1m = self.calculate_ema(self.data_1m, 20).iloc[-1]
+            ema_200_15m = self.calculate_ema(self.data_15m, 200).iloc[-1]
             rsi_1m = self.calculate_rsi(self.data_1m, 14).iloc[-1]
             macd_line, macd_signal, _ = self.calculate_macd(self.data_1m)
+
+            # --- 2. CONFIRMAÇÃO DE TENDÊNCIA M15 (COR DO CANDLE ANTERIOR + ATUAL) ---
+            # Pegamos a penúltima vela (fechada) para ter uma base sólida
+            open_15m_prev = self.data_15m['open'].iloc[-2]
+            close_15m_prev = self.data_15m['close'].iloc[-2]
             
-            if pd.isna(macd_line.iloc[-1]) or pd.isna(macd_signal.iloc[-1]):
-                return "HOLD", 0
-
-            score = 0
-            
-            # AJUSTE 2: Lógica de Pontuação (Score >= 2 já permite entrada se volume estiver forte)
-            # --- LÓGICA DE COMPRA (LONG) ---
-            if current_price > ema_200_15m:
-                reasons = []
-                if rsi_1m < 50: 
-                    score += 1
-                    reasons.append("RSI<50")
-                if macd_line.iloc[-1] > macd_signal.iloc[-1]: 
-                    score += 1
-                    reasons.append("MACD_Cross")
-                if current_price < (ema_20_1m * 1.002): 
-                    score += 1
-                    reasons.append("Near_EMA20")
-                
-                if score >= 2 and volume_ok:
-                    # Filtros de Direção e Exaustão
-                    if current_price <= last_price: return "HOLD", 0
+            # E a atual para sentir o momento
+            open_15m_curr = self.data_15m['open'].iloc[-1]
+            close_15m_curr = self.data_15m['close'].iloc[-1]
+        
+            # Tendência Forte: Vela anterior confirmada + Vela atual na mesma direção
+            m15_vermelho = (close_15m_prev < open_15m_prev) and (close_15m_curr < open_15m_curr)
+            m15_verde = (close_15m_prev > open_15m_prev) and (close_15m_curr > open_15m_curr)
+        
+            # --- 3. LÓGICA DE VENDA (SHORT) ---
+            if current_price < ema_200_15m:
+                # Se o M15 estiver verde (revidando), o Sniper não atira em Short
+                if not m15_vermelho:
+                    return "HOLD", 0
+        
+                # TRAVA RSI: Não vende fundo (Aumentei para 38 conforme seu backtest)
+                if rsi_1m < 38:
+                    return "HOLD", 0
                     
-                    body_size = abs(current_price - last_price)
-                    avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 3.5): return "HOLD", 0
-                    
-                    msg = f"🚀 [COMPRA] {self.symbol} | Score: {score} ({', '.join(reasons)}) | Vol: OK"
-                    self.notifier.send_message(msg)
-                    log.info(msg)
-                    return "BUY", atr
-
-            # --- LÓGICA DE VENDA (SHORT) ---
-            elif current_price < ema_200_15m:
-                reasons = []
-                if rsi_1m > 50: 
-                    score += 1
-                    reasons.append("RSI>50")
-                if macd_line.iloc[-1] < macd_signal.iloc[-1]: 
-                    score += 1
-                    reasons.append("MACD_Cross")
-                if current_price > (ema_20_1m * 0.998): 
-                    score += 1
-                    reasons.append("Near_EMA20")
-                
-                if score >= 2 and volume_ok:
-                    if current_price >= last_price: return "HOLD", 0
-                    
-                    body_size = abs(current_price - last_price)
-                    avg_body = abs(self.data_1m['close'].diff()).tail(10).mean()
-                    if body_size > (avg_body * 3.5): return "HOLD", 0
-
-                    msg = f"🔻 [VENDA] {self.symbol} | Score: {score} ({', '.join(reasons)}) | Vol: OK"
-                    self.notifier.send_message(msg)
-                    log.info(msg)
+                # GATILHO A: Rompimento com Volume (Seu código já está ótimo aqui)
+                if current_price < minima_15m and pico_volume:
+                    log.info(f"🔥 {self.symbol} Rompimento de Ignição detectado!")
                     return "SELL", atr
 
-            return "HOLD", 0 
+                # FILTRO DE EXAUSTÃO MÉDIA (0.8%)
+                distancia_media = (ema_20_1m - current_price) / ema_20_1m
+                if distancia_media > 0.008:
+                    log.warning(f"🚫 {self.symbol} esticado ({distancia_media:.2%}).")
+                    return "HOLD", 0
 
+                # GATILHO B: Score de Pullback
+                score = 0
+                if rsi_1m > 50: score += 1
+                if macd_line.iloc[-1] < macd_signal.iloc[-1]: score += 1
+                if current_price > (ema_20_1m * 0.998): score += 1
+                
+                # Só entra se houver volume real (acima da média)
+                if score >= 2 and current_volume > avg_vol_10:
+                    if current_price >= last_price: return "HOLD", 0
+                    return "SELL", atr
+
+            # --- 4. LÓGICA DE COMPRA (LONG) ---
+            elif current_price > ema_200_15m:
+                # SÓ COMPRA SE O M15 ESTIVER SUBINDO
+                if not m15_verde:
+                    return "HOLD", 0
+
+                # TRAVA RSI: Não compra topo (Overbought)
+                if rsi_1m > 62:
+                    log.info(f"🛑 {self.symbol} RSI Sobrecomprado ({rsi_1m:.2f}).")
+                    return "HOLD", 0
+
+                # GATILHO A: Rompimento de Ignição
+                if current_price > maxima_15m and pico_volume:
+                    return "BUY", atr
+
+                # FILTRO DE EXAUSTÃO MÉDIA (0.8%)
+                distancia_media = (current_price - ema_20_1m) / ema_20_1m
+                if distancia_media > 0.008:
+                    return "HOLD", 0
+
+                # GATILHO B: Score de Pullback
+                score = 0
+                if rsi_1m < 50: score += 1
+                if macd_line.iloc[-1] > macd_signal.iloc[-1]: score += 1
+                if current_price < (ema_20_1m * 1.002): score += 1
+                
+                if score >= 2 and current_volume > avg_vol_10:
+                    if current_price <= last_price: return "HOLD", 0
+                    return "BUY", atr
+
+            return "HOLD", 0
         except Exception as e:
-            log.error(f"Erro em check_signal ({self.symbol}): {e}")
-            return "HOLD", 0 
+            log.error(f"Erro no check_signal: {e}")
+            return "HOLD", 0
 
     def is_market_safe(self):
         agora = datetime.datetime.now()
@@ -161,66 +149,44 @@ class TradingStrategy:
         atr_series = self.calculate_atr(self.data_1m, 14)
         if len(atr_series) < 1: return None
         atr = atr_series.iloc[-1]
-        if atr <= 0: return None
-
-        changed = False
         
-        # Cálculo de lucro atual
         pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
-    
-        # --- A) DEFINIÇÃO DA DISTÂNCIA DE TRAILING (ADAPTATIVA) ---
-        # Ajustado para dar mais folga no início e ser mais agressivo no final
-        if pnl_pct < 0.01: 
-            trail_dist = atr * 6.0   # Folga extra no início (era 5.5)
-        elif pnl_pct < 0.025: 
-            trail_dist = atr * 4.0   
-        else: 
-            trail_dist = atr * 2.0   # Enforca o preço no lucro alto (era 2.5)
+        changed = False
 
-        # --- B) LÓGICA DE PROTEÇÃO (COMPRA) ---
+        # --- TRAILING ADAPTATIVO (MAIS FOLGA NO INÍCIO) ---
+        if pnl_pct < 0.012:
+            trail_dist = atr * 7.5   # Folga extra para aguentar o "repique" da LINK
+        elif pnl_pct < 0.025:
+            trail_dist = atr * 4.5
+        else:
+            trail_dist = atr * 2.2   # Enforca o lucro gordo
+
+        # --- PROTEÇÃO BREAK-EVEN ---
+        # Só ativa o zero-a-zero com 0.9% de lucro para não ser tirado no ruído
+        if not self.be_activated and pnl_pct >= 0.009:
+            self.sl_price = self.entry_price * (1.0003 if self.side == "BUY" else 0.9997)
+            self.be_activated = True
+            changed = True
+            self.notifier.send_message(f"🛡️ {self.symbol} - Break-even ativado em {self.sl_price:.4f}")
+
+        # --- AJUSTE DO STOP LOSS ---
         if self.side == "BUY":
-            # 1. Break-even (Proteção antecipada)
-            if not self.be_activated and pnl_pct >= 0.007: # Ativa com 0.7% (era 1.0%)
-                new_sl = self.entry_price * 1.0003 # Taxas pagas + micro lucro
-                if new_sl > self.sl_price:
-                    self.sl_price = new_sl
-                    self.be_activated = True
-                    changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (COMPRA) em {new_sl:.4f}")
-
-            # 2. Trailing Stop
             trail_sl = current_price - trail_dist
             if trail_sl > self.sl_price:
-                # Mudança significativa (> 0.10%)
-                if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0010: 
+                if (trail_sl - self.sl_price) / (self.sl_price if self.sl_price > 0 else 1) > 0.0010:
                     self.sl_price = trail_sl
                     changed = True
-
-        # --- C) LÓGICA DE PROTEÇÃO (VENDA) ---
-        elif self.side == "SELL":
-            # 1. Break-even (Proteção antecipada no Short)
-            if not self.be_activated and pnl_pct >= 0.009: # 0.9% para Short devido à volatilidade
-                new_sl = self.entry_price * 0.9997
-                if new_sl < self.sl_price or self.sl_price == 0:
-                    self.sl_price = new_sl
-                    self.be_activated = True
-                    changed = True
-                    self.notifier.send_message(f"🛡️ {self.symbol} - Break-even (VENDA) em {new_sl:.4f}")
-
-            # 2. Trailing Stop
+        else:
             trail_sl = current_price + trail_dist
             if (self.sl_price == 0) or (trail_sl < self.sl_price):
                 if self.sl_price > 0 and (self.sl_price - trail_sl) / trail_sl > 0.0010:
                     self.sl_price = trail_sl
                     changed = True
 
-        # --- D) VERIFICAÇÃO DE SAÍDA PARCIAL ---
-        if not self.partial_taken:
-            # Alvo de parcial ajustado para 1.0% (garantir lucro rápido)
-            target_partial = 0.010 if self.side == "BUY" else 0.011
-            if pnl_pct >= target_partial:
-                return "PARTIAL_EXIT" 
-    
+        # --- SAÍDA PARCIAL ---
+        if not self.partial_taken and pnl_pct >= 0.012:
+            return "PARTIAL_EXIT"
+
         return "UPDATE_SL" if changed else None
 
     # =========================================================
@@ -260,20 +226,35 @@ class TradingStrategy:
     # =========================================================
     def add_new_candle(self, timeframe, candle_data):
         """Adiciona ou atualiza velas em tempo real via WebSocket"""
+        # 1. Escolhe o DataFrame alvo (Referência direta, evita cópia precoce)
         df = self.data_1m if timeframe == "1m" else self.data_15m
         
         if not df.empty and candle_data['timestamp'] == df.iloc[-1]['timestamp']:
+            # 2. ATUALIZAÇÃO (Mesmo minuto): 
+            # Usamos .iloc[-1] para garantir que estamos mexendo na última linha
             idx = df.index[-1]
+            
             df.at[idx, 'close'] = candle_data['close']
             df.at[idx, 'volume'] = candle_data['volume']
+            
+            # Atualiza High/Low apenas se o novo tick superar o anterior
             if candle_data['high'] > df.at[idx, 'high']: df.at[idx, 'high'] = candle_data['high']
             if candle_data['low'] < df.at[idx, 'low']: df.at[idx, 'low'] = candle_data['low']
+            
+            # IMPORTANTE: Garantir que o 'open' não se perca se houver micro-ajuste da Bybit
+            if 'open' in candle_data: df.at[idx, 'open'] = candle_data['open']
+            
         else:
+            # 3. NOVO CANDLE (Virada de minuto):
             new_row = pd.DataFrame([candle_data])
+            # .tail(300) impede que o bot consuma toda a RAM do seu PC/VPS com o passar dos dias
             df = pd.concat([df, new_row], ignore_index=True).tail(300)
         
-        if timeframe == "1m": self.data_1m = df.copy()
-        else: self.data_15m = df.copy()
+        # 4. Salva de volta (Somente aqui atribuímos ao self)
+        if timeframe == "1m":
+            self.data_1m = df
+        else:
+            self.data_15m = df
 
     def load_historical_data(self, timeframe, candles):
         """
