@@ -102,7 +102,7 @@ def handle_signal_logic(message):
                         execute_new_trade(symbol, signal, current_price, current_atr)
                     else:
                         # Este log explica por que a OP disparou mas não abriu trade:
-                        log.warning(f"⚠️ {symbol}: Volatilidade alta ({volat:.5f}), mas estratégia não confirmou sinal.")
+                        log.debug(f"🔍 {symbol}: Analisando indicadores técnicos...")
                 else:
                     # Opcional: log para mostrar que o mercado está frio (comentado para não sujar o terminal)
                     # log.info(f"❄️ {symbol} frio: {volat:.5f}")
