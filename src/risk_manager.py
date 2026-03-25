@@ -31,25 +31,24 @@ class RiskManager:
     # =========================================================
     # 2. GESTÃO DE DESEMPENHO (DASHBOARD)
     # =========================================================
-    def update_dashboard(self, symbol, profit_loss):
-        """Atualiza as estatísticas com distinção entre Loss e Proteção"""
-        self.stats["total_trades"] += 1
+    def update_dashboard(self, symbol, pnl_liquido):
+        self.stats['total_trades'] += 1
         
-        # CATEGORIZAÇÃO
-        if profit_loss > 0: 
-            self.stats["wins"] += 1
-        elif profit_loss > -0.15: # Se perdeu só as taxas, é Proteção (Break-even)
-            if "protected" not in self.stats: self.stats["protected"] = 0
-            self.stats["protected"] += 1
-        else: 
-            self.stats["losses"] += 1
-        
-        # Acumula o PnL por símbolo
-        if symbol not in self.stats["pnl_history"]:
-            self.stats["pnl_history"][symbol] = 0.0
-        self.stats["pnl_history"][symbol] += profit_loss
-        
-        self._print_terminal_dashboard()
+        # Se o PnL for positivo, é uma vitória, não importa se saiu no TP ou SL
+        if pnl_liquido > 0.05: # Consideramos > 0.05 para cobrir variações de centavos
+            self.stats['wins'] += 1
+            status = "WIN"
+        # Se o PnL for quase zero (positivo ou negativo muito baixo), foi Proteção
+        elif pnl_liquido >= -0.10: 
+            self.stats['protected'] = self.stats.get('protected', 0) + 1
+            status = "PROTECTED"
+        # Só é LOSS se o prejuízo for real
+        else:
+            self.stats['losses'] += 1
+            status = "LOSS"
+    
+        self.stats['pnl_history'][symbol] = self.stats['pnl_history'].get(symbol, 0) + pnl_liquido
+        return status
 
     def get_performance_stats(self):
         """Retorna estatísticas detalhadas para o Telegram"""
@@ -115,65 +114,40 @@ class RiskManager:
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)
     # =========================================================
-    def get_dynamic_risk_params(self, current_price, sl_price, balance):
-        """Calcula alavancagem ideal e tamanho da mão baseado no risco"""
-        try:
-            # 1. Calcula a variação percentual até o Stop Loss
-            price_variation = abs(current_price - sl_price) / current_price
-            # Filtro para evitar divisões por zero ou variações ínfimas
-            if price_variation < 0.008: price_variation = 0.008
-
-            # 2. Alavancagem Ideal: Risco fixo de 3% da banca por trade
-            ideal_leverage = 0.03 / price_variation
-            
-            # Ajuste de segurança: Mínimo 8x, Máximo 12x para bancas pequenas
-            leverage = int(min(max(ideal_leverage, 8), 12))
-            
-            # 3. Cálculo da Quantidade (Margem de 45% do saldo total)
-            margin_to_use = balance * 0.45
-            qty_usdt = margin_to_use * leverage
-            qty = qty_usdt / current_price
-
-            return leverage, qty
-        except Exception:
-            # Fallback de segurança em caso de erro matemático
-            return 10, 0
+    def get_dynamic_risk_params(self, entry_price, sl_price, total_balance):
+        """
+        Calcula quanto de 'Qty' (lote) comprar para usar a banca de $20 com 20x.
+        """
+        # 1. Definimos quanto da banca vamos usar como margem
+        # Para $20, vamos usar $6 de margem por trade (permitindo 3 trades)
+        margin_per_trade = total_balance / self.max_positions 
+        
+        # 2. O valor real da posição (Margem * Alavancagem)
+        # Ex: $6 * 20x = $120 de poder de compra
+        position_value = margin_per_trade * self.fixed_leverage
+        
+        # 3. Quantidade de moedas (Qty)
+        qty = position_value / entry_price
+        
+        # Retorna a alavancagem fixa e a quantidade calculada
+        return self.fixed_leverage, qty
 
     # =========================================================
     # 4. CÁLCULOS DE STOP LOSS E TAKE PROFIT ADAPTATIVO
     # =========================================================
-    def get_sl_tp_adaptive(self, symbol, side, current_price, atr, leverage):
-        """Define SL e TP baseados na volatilidade (ATR) e alavancagem"""
-        prec_info = self.PRECISION_MAP.get(symbol, self.PRECISION_MAP["DEFAULT"])
-        price_precision = prec_info[1]
+    def get_sl_tp_adaptive(self, symbol, side, price, atr, leverage):
+        """
+        Define o Stop Loss e Take Profit inicial.
+        O SL é baseado no ATR (volatilidade), mas o monitor_protection 
+        vai assumir o controle depois.
+        """
+        distancia_sl = atr * 2.2 # Stop técnico curto
         
-        price = float(current_price)
-        
-        # --- AJUSTE SNIPER: MAIS FOLGA E ALVO MAIOR ---
-        # Aumentamos o SL de 3.5 para 4.5 para evitar "violinadas" (ruído)
-        # Aumentamos o TP de 6.0 para 9.0 para buscar o 2:1 real (pós-taxas)
-        sl_distance = atr * 4.5
-        tp_distance = atr * 9.0
-        
-        # --- FILTRO DE VIABILIDADE (ANTI-TAXA) ---
-        # Se a volatilidade (ATR) for tão baixa que o TP não cobre as taxas (0.12%), 
-        # forçamos uma distância mínima de 0.6% para o TP
-        min_tp_dist = price * 0.006 
-        if tp_distance < min_tp_dist:
-            tp_distance = min_tp_dist
-            # Ajustamos o SL proporcionalmente para manter o gerenciamento
-            sl_distance = tp_distance / 2 
-
-        # --- TRAVA ANTI-LIQUIDAÇÃO ---
-        max_safe_dist = (0.7 / leverage) * price
-        if sl_distance > max_safe_dist:
-            sl_distance = max_safe_dist
-
         if side == "Buy":
-            sl = price - sl_distance
-            tp = price + tp_distance
+            sl = price - distancia_sl
+            tp = price + (distancia_sl * 2.5) # Alvo inicial de 2.5x o risco
         else:
-            sl = price + sl_distance
-            tp = price - tp_distance
+            sl = price + distancia_sl
+            tp = price - (distancia_sl * 2.5)
             
-        return round(sl, price_precision), round(tp, price_precision)
+        return sl, tp

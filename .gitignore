@@ -14,3 +14,10 @@ logs/
 # Arquivos do Sistema
 .DS_Store
 Thumbs.db
+
+# Arquivos de backtest
+*.csv
+*.txt
+*.md
+deploy.py
+monitor_and_backtest.py

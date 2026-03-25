@@ -1,0 +1,79 @@
+{
+  "ADAUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "AVAXUSDT": {
+    "atr_mult": 2.5,
+    "min_pnl_be": 0.005,
+    "dist_respiro": 0.022,
+    "min_adx": 35,
+    "signal_interval": 4
+  },
+  "BTCUSDT": {
+    "atr_mult": 1.6,
+    "min_pnl_be": 0.005,
+    "dist_respiro": 0.012,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "DOTUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "ETHUSDT": {
+    "atr_mult": 1.7,
+    "min_pnl_be": 0.006,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "LINKUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "NEARUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "OPUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "SOLUSDT": {
+    "atr_mult": 2.2,
+    "min_pnl_be": 0.005,
+    "dist_respiro": 0.018,
+    "min_adx": 32,
+    "signal_interval": 4
+  },
+  "SUIUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.007,
+    "dist_respiro": 0.015,
+    "min_adx": 25,
+    "signal_interval": 3
+  },
+  "XRPUSDT": {
+    "atr_mult": 1.8,
+    "min_pnl_be": 0.004,
+    "dist_respiro": 0.01,
+    "min_adx": 28,
+    "signal_interval": 3
+  }
+}

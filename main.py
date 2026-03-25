@@ -34,15 +34,37 @@ ULTIMO_CHECK_VIVO = 0
 SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
 ULTIMO_CHECK_CALOR = 0
+COIN_CONFIGS = {
+    "BTCUSDT":  {"atr_mult": 1.5, "min_pnl_be": 0.004, "dist_respiro": 0.010, "min_adx": 22, "invert_signal": False},
+    "ETHUSDT":  {"atr_mult": 1.6, "min_pnl_be": 0.005, "dist_respiro": 0.012, "min_adx": 24, "invert_signal": False, "use_regime_filter": True, "allow_short": False},
+    "SOLUSDT":  {"atr_mult": 2.6, "min_pnl_be": 0.004, "dist_respiro": 0.024, "min_adx": 36, "invert_signal": True},
+    "XRPUSDT":  {"atr_mult": 2.0, "min_pnl_be": 0.0035, "dist_respiro": 0.012, "min_adx": 30, "invert_signal": True},
+    "AVAXUSDT": {"atr_mult": 2.6, "min_pnl_be": 0.004, "dist_respiro": 0.024, "min_adx": 36, "invert_signal": True},
+}
+
+strategies = {}
+for symbol in SYMBOLS:
+    strat = TradingStrategy(symbol=symbol, notifier=notifier)
+    
+    # Injeta as configs específicas se existirem no dicionário
+    config = COIN_CONFIGS.get(symbol, {})
+    for key, value in config.items():
+        setattr(strat, key, value) # Isso sobrescreve os defaults da classe
+        
+    strategies[symbol] = strat
 
 # --- INICIALIZAÇÃO DE COMPONENTES GLOBAIS ---
 notifier = TelegramNotifier()
 log = setup_logger()
-strategies = {symbol: TradingStrategy(symbol=symbol, notifier=notifier) for symbol in SYMBOLS}
 risk_mgr = RiskManager()
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
 executor = ExecutionManager(session)
 message_queue = Queue()
+
+MASTERS = ["BTCUSDT", "ETHUSDT"]
+for m in MASTERS:
+    if m not in strategies:
+        strategies[m] = TradingStrategy(symbol=m, notifier=notifier)
 
 cache_balance = {"total": 0, "avail": 0, "last_update": 0}
 cache_positions = {"data": [], "last_update": 0}
@@ -52,85 +74,84 @@ cache_positions = {"data": [], "last_update": 0}
 # =========================================================
 
 def handle_signal_logic(message):
-    """Processa dados do WebSocket e decide entradas/saídas com Filtro Sniper"""
     if "data" not in message: return
     
     topic = message.get("topic", "")
     parts = topic.split('.')
-    timeframe = parts[1] 
     symbol = parts[-1]
+    timeframe = parts[1]
     
-    candle = message["data"][0]
-    current_price = float(candle["close"])
+    # --- A) ATUALIZAÇÃO DOS DADOS (O que você já faz) ---
     strat = strategies.get(symbol)
     if not strat: return
-
-    # Identifica se o candle fechou (confirmado)
-    is_confirmado = candle.get("confirm", False)
-
+    
+    candle = message["data"][0]
     tf_key = "1m" if timeframe == "1" else "15m"
     strat.add_new_candle(tf_key, {
         "open": float(candle["open"]),
-        "close": current_price,
+        "close": float(candle["close"]),
         "high": float(candle["high"]),
         "low": float(candle["low"]),
         "timestamp": int(candle["start"]),
         "volume": float(candle["volume"])
     })
-    
+
+    # --- B) CÁLCULO DO FAROL (Global) ---
+    # Só recalculamos o sentimento se o candle de 15m do BTC ou ETH for atualizado
+    sentimento = get_market_sentiment()
+
+    # --- C) LÓGICA DE EXECUÇÃO (Apenas Moedas na Whitelist) ---
     if tf_key == "1m":
-        # --- A) MONITORAMENTO DE POSIÇÃO ATIVA ---
+        current_price = float(candle["close"])
+        is_confirmado = candle.get("confirm", False)
+
+        # 1. Proteção de Posição Ativa
         if strat.is_positioned:
             status = strat.monitor_protection(current_price)
             if status == "UPDATE_SL":
                 update_remote_sl(symbol, strat.sl_price)
             elif status == "PARTIAL_EXIT":
                 execute_partial_tp(symbol, strat, current_price)
-        
-        # --- B) BUSCA POR NOVOS SINAIS (SÓ NO FECHAMENTO DO CANDLE DE 1M) ---
-        elif is_confirmado:
-            # 1. Cálculo de Volatilidade (Filtro Sniper de 0.12%)
-            df = strat.data_1m
-            if df is not None and len(df) >= 20:
-                recent = df.tail(20)
-                volat = (abs(recent['close'] - recent['open']) / recent['open']).mean()
-                threshold = 0.0012 
-                
-                if volat >= threshold:
-                    # Chame a sua Strategy que já contém o novo Filtro M15 e RSI 38/62
-                    signal, current_atr = strat.check_signal()
-                    
-                    if signal in ["BUY", "SELL"]:
-                        log.info(f"🎯 SNIPER: {symbol} disparou {signal}! Volat: {volat:.5f}")
-                        execute_new_trade(symbol, signal, current_price, current_atr)
-                else:
-                    # Mercado muito parado para a estratégia sniper
-                    pass
+
+        # 2. Busca por Entrada (Passando o sentimento do Farol)
+        elif is_confirmado and symbol in SYMBOLS:
+            # Chame o check_signal passando o sentimento calculado
+            signal, current_atr = strat.check_signal(market_sentiment=sentimento)
+            
+            if signal in ["BUY", "SELL"]:
+                log.info(f"🎯 SINAL {signal} em {symbol} | Sentimento: {sentimento}")
+                execute_new_trade(symbol, signal, current_price, current_atr)
 
 # =========================================================
 # 2. FUNÇÕES DE EXECUÇÃO E API
 # =========================================================
 
 def execute_new_trade(symbol, signal, price, atr):
-    """Abre nova operação com gestão de risco e trava anti-liquidação"""
+    """Abre nova operação com TP longo (Trend Following)"""
     get_cached_data() 
     if len(cache_positions['data']) >= risk_mgr.max_positions: return
-    if cache_balance['avail'] < 2.0: return
+    if cache_balance['avail'] < 5.0: return # Mínimo para margem
 
     try:
         side = "Buy" if signal == "BUY" else "Sell"
-        # Calcula alavancagem primeiro (para blindar o SL contra liquidação)
+        # 1. Parâmetros de Risco
         lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
-        sl, tp = risk_mgr.get_sl_tp_adaptive(symbol, side, price, atr, lev)
+        sl, _ = risk_mgr.get_sl_tp_adaptive(symbol, side, price, atr, lev)
+        
+        # 2. TP de Segurança (Longo para deixar correr)
+        tp_longo = price * (1.20 if side == "Buy" else 0.80)
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
 
         prepare_leverage(symbol, lev)
         
+        # 3. Envio da Ordem
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
-            qty=qty_str, takeProfit=str(round(tp, p_prec)), stopLoss=str(round(sl, p_prec)),
+            qty=qty_str, 
+            takeProfit=str(round(tp_longo, p_prec)), 
+            stopLoss=str(round(sl, p_prec)),
             tpOrderType="Market", slOrderType="Market", tpslMode="Full"
         )
 
@@ -140,88 +161,91 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.side = signal
             strat.entry_price = price
             strat.sl_price = sl
+            strat.current_qty = float(qty) # Salva para a parcial
             strat.partial_taken = False
-            notifier.send_message(f"🚀 *Trade Aberto:* {symbol}\nLado: {side} | Alav: {lev}x\nQty: {qty_str}")
+            
+            notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL inicial: {round(sl, p_prec)}")
+            
     except Exception as e:
         log.error(f"Erro abertura {symbol}: {e}")
 
 def execute_partial_tp(symbol, strat, current_price):
-    """Executa o fechamento de 50% da posição e trava o lucro"""
+    """Fecha 50% e move SL para o Breakeven"""
+    if strat.partial_taken: return
+
     try:
-        # 1. Verifica se já não fizemos a parcial nesta operação
-        if strat.partial_taken:
-            return
-
-        log.info(f"💰 [ALVO ATINGIDO] Iniciando Saída Parcial para {symbol} em {current_price}")
-
-        # 2. Pega a quantidade atual da posição (via API ou variável da classe)
-        # Exemplo: metade do lote original
-        qty_to_close = strat.current_qty / 2
+        log.info(f"💰 Alvo Parcial em {symbol} ({current_price})")
         
-        # 3. Envia a ordem de fechamento de MERCADO para a Bybit
-        # Aqui você usa a sua função de ordem existente, mas com o lado oposto
-        side_to_close = "SELL" if strat.side == "BUY" else "BUY"
+        q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+        qty_to_close = strat.current_qty * 0.5
+        qty_str = str(int(qty_to_close)) if q_prec == 0 else str(round(qty_to_close, q_prec))
+
+        side_close = "Sell" if strat.side == "BUY" else "Buy"
         
-        order = session.place_order(
-            category="linear",
-            symbol=symbol,
-            side=side_to_close,
-            orderType="Market",
-            qty=str(qty_to_close)
+        # 1. Fecha metade a mercado
+        res = session.place_order(
+            category="linear", symbol=symbol, side=side_close,
+            orderType="Market", qty=qty_str, reduceOnly=True
         )
 
-        if order['retCode'] == 0:
-            # 4. ATUALIZA O ESTADO DO BOT
+        if res['retCode'] == 0:
             strat.partial_taken = True
-            strat.current_qty -= qty_to_close
+            strat.current_qty -= float(qty_str)
             
-            # 5. AJUSTE DE SEGURANÇA: Move o Stop para o Break-even IMEDIATAMENTE
-            # Isso garante que a outra metade nunca fique no prejuízo
+            # 2. Move SL para o Zero (Break-even) + taxa
             new_sl = strat.entry_price * (1.0005 if strat.side == "BUY" else 0.9995)
             strat.sl_price = new_sl
             update_remote_sl(symbol, new_sl)
             
-            strat.notifier.send_message(f"✅ {symbol}: Parcial de 50% executada! Stop movido para o Zero.")
-        else:
-            log.error(f"❌ Erro ao executar parcial em {symbol}: {order['retMsg']}")
-
+            notifier.send_message(f"✅ *{symbol}* Parcial de 50%!\n🛡️ Stop movido para o Zero.")
+            
     except Exception as e:
-        log.error(f"🔥 Falha crítica na execução da parcial ({symbol}): {e}")
+        log.error(f"Erro na parcial de {symbol}: {e}")
 
 def update_remote_sl(symbol, new_sl):
+    """Atualiza o Stop Loss na Bybit (Trailing)"""
     try:
-        # 1. Verificação de Segurança: A posição ainda existe?
-        pos_resp = session.get_positions(category="linear", symbol=symbol)
-        
-        if pos_resp['retCode'] == 0 and pos_resp['result']['list']:
-            pos = pos_resp['result']['list'][0]
-            size = float(pos.get('size', 0))
-            
-            # Se o tamanho da posição for 0, ela já foi fechada pelo TP ou SL da Bybit
-            if size == 0:
-                log.info(f"ℹ️ {symbol} já fechou no TP/SL. Ignorando atualização de trava.")
-                return
-
-            # 2. Se a posição existe, atualizamos o Stop
-            _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-            session.set_trading_stop(
-                category="linear", 
-                symbol=symbol,
-                stopLoss=str(round(new_sl, p_prec)), 
-                tpslMode="Full"
-            )
-            log.info(f"🛡️ SL Atualizado ({symbol}): {new_sl}")
-            
+        _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+        session.set_trading_stop(
+            category="linear", symbol=symbol,
+            stopLoss=str(round(new_sl, p_prec)), tpslMode="Full"
+        )
+        log.info(f"🛡️ SL Remoto Atualizado: {symbol} -> {new_sl}")
     except Exception as e:
-        # Filtra o erro 10001 para não sujar o log se a posição fechar durante a requisição
-        if "10001" in str(e):
-            log.info(f"ℹ️ {symbol} fechou durante a tentativa de update.")
-        else:
-            log.error(f"Erro ao atualizar Stop {symbol}: {e}")
+        if "110001" not in str(e): # Ignora erro de posição já fechada
+            log.error(f"Erro update SL {symbol}: {e}")
 
 # =========================================================
 # 3. AUXILIARES DE DADOS E WEBSOCKET
 # =========================================================
+
+def get_market_sentiment():
+    """
+    Lê os dados de 15m armazenados nas estratégias do BTC e ETH.
+    """
+    try:
+        results = []
+        for symbol in ["BTCUSDT", "ETHUSDT"]:
+            strat = strategies.get(symbol)
+            if strat is None or strat.data_15m is None or len(strat.data_15m) < 20:
+                continue
+            
+            df = strat.data_15m
+            ema_20 = df['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+            current_price = df['close'].iloc[-1]
+            
+            results.append("UP" if current_price > ema_20 else "DOWN")
+
+        # Lógica do Farol
+        if all(r == "UP" for r in results) and len(results) == 2:
+            return "BULLISH"
+        elif all(r == "DOWN" for r in results) and len(results) == 2:
+            return "BEARISH"
+        return "NEUTRAL"
+            
+    except Exception as e:
+        log.error(f"Erro no Farol: {e}")
+        return "NEUTRAL"
 
 def get_cached_data(force=False):
     global cache_balance, cache_positions
@@ -337,7 +361,11 @@ def sync_open_positions():
     for p in cache_positions['data']:
         symbol = p['symbol']
         if symbol in strategies:
-            strategies[symbol].sync_position(side=p['side'], entry_price=p['avgPrice'], sl_price=p['stopLoss'], tp_price=p['takeProfit'])
+            strat = strategies[symbol]
+            # Adicione o size aqui para a parcial funcionar após restart
+            strat.current_qty = abs(float(p.get('size', 0))) 
+            strat.sync_position(side=p['side'], entry_price=p['avgPrice'], 
+                               sl_price=p['stopLoss'], tp_price=p['takeProfit'])
 
 def process_queue():
     while True:
