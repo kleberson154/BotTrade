@@ -265,3 +265,23 @@ class TradingStrategy:
              self.be_activated = True
              
         log.info(f"🔄 [{self.symbol}] Estado sincronizado: {self.side} @ {self.entry_price}")
+        
+    def load_historical_data(self, timeframe, candles):
+        """Preenche os deques com dados históricos no início do bot."""
+        try:
+            target_deque = self.candles_1m if timeframe == "1m" else self.candles_15m
+            
+            for candle in candles:
+                # Evita duplicatas se o websocket já tiver mandado a mesma vela
+                if len(target_deque) == 0 or target_deque[-1]['timestamp'] != candle['timestamp']:
+                    target_deque.append(candle)
+            
+            # Marca como 'dirty' para o próximo check_signal reconstruir o DataFrame
+            if timeframe == "1m":
+                self._dirty_1m = True
+            else:
+                self._dirty_15m = True
+                
+            log.info(f"✅ [{self.symbol}] {len(candles)} velas de {timeframe} carregadas.")
+        except Exception as e:
+            log.error(f"❌ Erro ao carregar histórico para {self.symbol} ({timeframe}): {e}")
