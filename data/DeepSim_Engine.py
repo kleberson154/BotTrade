@@ -3,6 +3,7 @@ import numpy as np
 import sys
 import os
 import time
+from pandas.errors import ParserError
 
 # --- AJUSTE DE CAMINHO ---
 root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,8 +13,9 @@ if root_path not in sys.path:
 from src.strategy import TradingStrategy
 
 class DeepSimulator:
-    def __init__(self, symbol, csv_path):
+    def __init__(self, symbol, csv_path, verbose=True):
         self.symbol = symbol
+        self.verbose = verbose
         base_path_coins = os.path.join(os.getcwd(), 'data', 'coins')
         base_path_root = os.path.join(os.getcwd(), 'data')
 
@@ -30,8 +32,32 @@ class DeepSimulator:
         if not os.path.exists(self.csv_full_path):
             raise FileNotFoundError(f"Arquivo não encontrado: {self.csv_full_path}")
 
-        self.df = pd.read_csv(self.csv_full_path)
-        self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
+        usecols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        dtypes = {
+            'open': 'float32',
+            'high': 'float32',
+            'low': 'float32',
+            'close': 'float32',
+            'volume': 'float32',
+        }
+
+        try:
+            self.df = pd.read_csv(
+                self.csv_full_path,
+                usecols=usecols,
+                dtype=dtypes,
+                low_memory=False,
+            )
+        except (ParserError, MemoryError, ValueError):
+            self.df = pd.read_csv(
+                self.csv_full_path,
+                usecols=usecols,
+                dtype=dtypes,
+                engine='python',
+            )
+
+        self.df['timestamp'] = pd.to_datetime(self.df['timestamp'], errors='coerce')
+        self.df = self.df.dropna(subset=['timestamp', 'open', 'high', 'low', 'close', 'volume']).reset_index(drop=True)
         
         self.fee_rate = 0.0006 
         self.strat = TradingStrategy(symbol, notifier=None)
@@ -42,7 +68,8 @@ class DeepSimulator:
 
     def run(self):
         start_time = time.time()
-        print(f"Simulando {self.symbol}...")
+        if self.verbose:
+            print(f"Simulando {self.symbol}...")
 
         # Ajuste dinâmico de aquecimento
         available_15m = max(2, len(self.df) // 15)
@@ -58,7 +85,8 @@ class DeepSimulator:
         for candle in warmup_rows:
             self.strat.add_new_candle("1m", candle)
 
-        print(f"🔄 Iniciando Simulação: {len(self.df)} velas...")
+        if self.verbose:
+            print(f"🔄 Iniciando Simulação: {len(self.df)} velas...")
 
         ts_arr = self.df['timestamp'].to_numpy()
         open_arr = self.df['open'].to_numpy()
@@ -71,7 +99,7 @@ class DeepSimulator:
         m15_accumulator = []
         total_steps = len(self.df)
         for i in range(warmup, len(self.df)):
-            if i % 5000 == 0:
+            if self.verbose and i % 5000 == 0:
                 elapsed = time.time() - start_time
                 print(f"   > Progresso: {i}/{total_steps} ({(i/total_steps):.1%}) | Tempo: {elapsed:.1f}s")
             row_open = open_arr[i]

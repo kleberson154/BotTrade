@@ -15,7 +15,7 @@ from data.DeepSim_Engine import DeepSimulator
 BASE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'coins')
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT",  "AVAXUSDT", "XRPUSDT"
-    #"ADAUSDT", "NEARUSDT", "DOTUSDT", "FETUSDT", "LINKUSDT", "SUIUSDT", "OPUSDT"
+    ,"ADAUSDT", "NEARUSDT", "DOTUSDT", "LINKUSDT", "SUIUSDT", "OPUSDT"
 ]
 
 DEFAULT_CONFIG = {
@@ -33,25 +33,153 @@ DEFAULT_CONFIG = {
     "allow_short": True,
 }
 COIN_CONFIGS = {
-    # BTC: Precisa de um Stop técnico clássico. 1.5 ATR é o "sweet spot".
-    "BTCUSDT":  {"atr_mult": 1.5, "min_pnl_be": 0.004, "dist_respiro": 0.010, "min_adx": 22, "signal_interval": 3, "invert_signal": False},
-    
-    # SOL: O aumento do ADX para 32 foi excelente. Vamos manter.
-    "SOLUSDT":  {"atr_mult": 2.6, "min_pnl_be": 0.004, "dist_respiro": 0.024, "min_adx": 36, "signal_interval": 5, "invert_signal": True},
-    
-    # XRP: O grande vilão do último teste. Vamos dar 1.8 de ATR para ele respirar.
-    "XRPUSDT":  {"atr_mult": 2.0, "min_pnl_be": 0.0035, "dist_respiro": 0.012, "min_adx": 30, "signal_interval": 5, "invert_signal": True},
-    
-    # AVAX: Muito volátil. Precisa de ADX alto para não entrar em lateralização.
-    "AVAXUSDT": {"atr_mult": 2.6, "min_pnl_be": 0.004, "dist_respiro": 0.024, "min_adx": 36, "signal_interval": 5, "invert_signal": True},
-    
-    # ETH: Vamos baixar o BE para 0.6% para tentar salvar as trades curtas.
-    "ETHUSDT":  {
-        "atr_mult": 1.6,
+    "BTCUSDT": {
+        "atr_mult": 1.8,
         "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "ETHUSDT":  {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 30,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": False,
+    },
+    "SOLUSDT": {
+        "atr_mult": 2.2,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.022,
+        "min_adx": 34,
+        "signal_interval": 6,
+        "invert_signal": False,
+        "use_regime_filter": False,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.0015,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "AVAXUSDT": {
+        "atr_mult": 1.6,
+        "min_pnl_be": 0.0045,
         "dist_respiro": 0.012,
         "min_adx": 24,
         "signal_interval": 4,
+        "invert_signal": False,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.0015,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "XRPUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": True,
+    },
+
+    "ADAUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 5,
+        "invert_signal": False,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.0015,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "NEARUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "DOTUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "LINKUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 30,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": False,
+    },
+    "SUIUSDT": {
+        "atr_mult": 1.8,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.015,
+        "min_adx": 28,
+        "signal_interval": 6,
+        "invert_signal": True,
+        "use_regime_filter": True,
+        "regime_ema_fast": 50,
+        "regime_ema_slow": 200,
+        "regime_min_gap": 0.002,
+        "allow_long": True,
+        "allow_short": True,
+    },
+    "OPUSDT": {
+        "atr_mult": 2.0,
+        "min_pnl_be": 0.005,
+        "dist_respiro": 0.018,
+        "min_adx": 32,
+        "signal_interval": 6,
         "invert_signal": False,
         "use_regime_filter": True,
         "regime_ema_fast": 50,
@@ -203,10 +331,11 @@ def run_full_backtest():
     results = run_backtest_single_pass("RISCO DINÂMICO")
     save_report(
         results,
+        report_csv_path='backtest_report_90d.csv',
         summary_txt_path='backtest_summary_90d.txt',
         title='BACKTEST SUMMARY - 90 DIAS x 12 MOEDAS'
     )
-    print("\n✅ Relatórios salvos: backtest_summary_90d.txt")
+    print("\n✅ Relatórios salvos: backtest_report_90d.csv e backtest_summary_90d.txt")
 
 
 if __name__ == "__main__":
