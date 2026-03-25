@@ -272,16 +272,17 @@ class TradingStrategy:
             target_deque = self.candles_1m if timeframe == "1m" else self.candles_15m
             
             for candle in candles:
-                # Evita duplicatas se o websocket já tiver mandado a mesma vela
                 if len(target_deque) == 0 or target_deque[-1]['timestamp'] != candle['timestamp']:
                     target_deque.append(candle)
             
-            # Marca como 'dirty' para o próximo check_signal reconstruir o DataFrame
             if timeframe == "1m":
                 self._dirty_1m = True
             else:
                 self._dirty_15m = True
                 
-            log.info(f"✅ [{self.symbol}] {len(candles)} velas de {timeframe} carregadas.")
+            # --- ADICIONE ESTA LINHA AQUI ---
+            self._sync_dataframes() 
+            
+            log.info(f"✅ [{self.symbol}] {len(candles)} velas de {timeframe} carregadas e DataFrame sincronizado.")
         except Exception as e:
             log.error(f"❌ Erro ao carregar histórico para {self.symbol} ({timeframe}): {e}")
