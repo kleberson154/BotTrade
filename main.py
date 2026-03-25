@@ -42,6 +42,8 @@ COIN_CONFIGS = {
     "AVAXUSDT": {"atr_mult": 2.6, "min_pnl_be": 0.004, "dist_respiro": 0.024, "min_adx": 36, "invert_signal": True},
 }
 
+
+notifier = TelegramNotifier()
 strategies = {}
 for symbol in SYMBOLS:
     strat = TradingStrategy(symbol=symbol, notifier=notifier)
@@ -54,7 +56,7 @@ for symbol in SYMBOLS:
     strategies[symbol] = strat
 
 # --- INICIALIZAÇÃO DE COMPONENTES GLOBAIS ---
-notifier = TelegramNotifier()
+
 log = setup_logger()
 risk_mgr = RiskManager()
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
