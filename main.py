@@ -4,6 +4,7 @@ import io
 import os
 import time
 import gc
+import pandas as pd
 from queue import Queue
 from threading import Thread
 
@@ -34,6 +35,7 @@ ULTIMO_CHECK_VIVO = 0
 SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
 ULTIMO_CHECK_CALOR = 0
+LAST_HOLD_LOG = {}
 
 # --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) ---
 COIN_CONFIGS = {
@@ -123,15 +125,17 @@ def handle_signal_logic(message):
                 return
 
             signal, current_atr = strat.check_signal(market_sentiment=sentimento)
-            
-            # --- LÓGICA DE INVERSÃO DE SINAL (CRÍTICO) ---
-            if getattr(strat, "invert_signal", False) and signal in ["BUY", "SELL"]:
-                signal = "SELL" if signal == "BUY" else "BUY"
-                log.info(f"🔄 Sinal Invertido em {symbol}!")
 
             if signal in ["BUY", "SELL"]:
                 log.info(f"🎯 SINAL {signal} em {symbol} | Sentimento: {sentimento}")
                 execute_new_trade(symbol, signal, current_price, current_atr)
+            else:
+                now_ts = time.time()
+                last_ts = LAST_HOLD_LOG.get(symbol, 0)
+                if now_ts - last_ts >= 900:
+                    reason = getattr(strat, "last_hold_reason", "sem motivo detalhado")
+                    log.info(f"⏸️ [{symbol}] HOLD | {reason}")
+                    LAST_HOLD_LOG[symbol] = now_ts
 
 # =========================================================
 # 2. FUNÇÕES DE EXECUÇÃO E API
@@ -357,17 +361,24 @@ def create_and_subscribe_websocket():
 
 def check_market_heat():
     log.info("🔥 --- TERMÔMETRO DE VOLATILIDADE ---")
-    threshold = 0.0012
     for symbol in SYMBOLS:
         strat = strategies.get(symbol)
         if not strat: continue
         df = strat.data_1m
-        if df is not None and len(df) >= 20:
-            recent = df.tail(20)
-            volat = (abs(recent['close'] - recent['open']) / recent['open']).mean()
-            pct = (volat / threshold) * 100
-            status = "✅ DISPARADO" if volat >= threshold else "🟠 ESQUENTANDO" if pct > 80 else "❄️ FRIO"
-            log.info(f"{symbol:10} | Volat: {volat:.5f} ({pct:5.1f}%) | {status}")
+        if df is not None and len(df) >= 30:
+            threshold = getattr(strat, "min_volatilidade_pct", 0.0012)
+            recent = df.tail(30)
+            tr = pd.concat([
+                recent['high'] - recent['low'],
+                (recent['high'] - recent['close'].shift()).abs(),
+                (recent['low'] - recent['close'].shift()).abs()
+            ], axis=1).max(axis=1)
+            atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
+            if pd.isna(atr_pct):
+                continue
+            pct = (atr_pct / threshold) * 100 if threshold > 0 else 0
+            status = "✅ DISPARADO" if atr_pct >= threshold else "🟠 ESQUENTANDO" if pct > 80 else "❄️ FRIO"
+            log.info(f"{symbol:10} | ATR%: {atr_pct:.5f} ({pct:5.1f}%) | {status}")
     log.info("-------------------------------------")
 
 def start_bot():

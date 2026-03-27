@@ -43,6 +43,7 @@ class TradingStrategy:
         self.tp_price = 0
         self.be_activated = False 
         self.partial_taken = False 
+        self.last_hold_reason = "init"
 
     # =========================================================
     # UTILITÁRIOS DE CÁLCULO (OTIMIZADOS)
@@ -101,9 +102,14 @@ class TradingStrategy:
     def check_signal(self, current_time=None, market_sentiment="NEUTRAL"):
         try:
             self._sync_dataframes()
+            self.last_hold_reason = "avaliando"
             
-            if not self.is_market_safe(current_time): return "HOLD", 0
-            if len(self.data_1m) < 40 or len(self.data_15m) < self.min_15m_candles: return "HOLD", 0
+            if not self.is_market_safe(current_time):
+                self.last_hold_reason = "protecao virada de hora (minuto 00/01/59)"
+                return "HOLD", 0
+            if len(self.data_1m) < 40 or len(self.data_15m) < self.min_15m_candles:
+                self.last_hold_reason = f"dados insuficientes 1m={len(self.data_1m)} 15m={len(self.data_15m)}"
+                return "HOLD", 0
 
             # 1. Preparação de Dados e Indicadores
             ind = self.calculate_indicators(self.data_1m.tail(100), self.data_15m.tail(250))
@@ -114,6 +120,7 @@ class TradingStrategy:
 
             # 2. Filtro de Regime (Evita mercados "mortos")
             if self.use_regime_filter and ind['regime_gap'] < 0.0015:
+                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.0015)"
                 return "HOLD", 0
 
             # 3. Lógica de Decisão
@@ -151,14 +158,33 @@ class TradingStrategy:
             # 4. Filtros de Sentimento e Inversão
             final_signal = raw_signal
             if final_signal == "BUY" and (not self.allow_long or (market_sentiment == "BEARISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
+                self.last_hold_reason = f"bloqueado por sentimento/allow_long (sent={market_sentiment})"
                 final_signal = "HOLD"
             if final_signal == "SELL" and (not self.allow_short or (market_sentiment == "BULLISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
+                self.last_hold_reason = f"bloqueado por sentimento/allow_short (sent={market_sentiment})"
                 final_signal = "HOLD"
 
             if final_signal != "HOLD" and self.invert_signal:
                 old = final_signal
                 final_signal = "SELL" if old == "BUY" else "BUY"
                 log.info(f"🔄 [{self.symbol}] Inversão: {old} -> {final_signal}")
+
+            if final_signal == "HOLD" and self.last_hold_reason == "avaliando":
+                motivos = []
+                if not tendencia_forte:
+                    motivos.append(f"adx={ind['adx_1m']:.1f}<{self.min_adx}")
+                if not volat_ok:
+                    motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
+                if not pico_vol:
+                    motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier} da media({avg_vol:.2f})")
+                if len(motivos) == 0:
+                    motivos.append("sem rompimento m1/m15 ou RSI de exaustao")
+                self.last_hold_reason = " | ".join(motivos)
+            elif final_signal != "HOLD":
+                self.last_hold_reason = (
+                    f"entrada={final_signal} adx={ind['adx_1m']:.1f} "
+                    f"atr%={ind['atr_pct']:.4f} vol={curr_vol:.2f}/avg20={avg_vol:.2f}"
+                )
 
             return final_signal, dist_sl
 
