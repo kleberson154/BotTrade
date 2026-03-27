@@ -132,7 +132,7 @@ def handle_signal_logic(message):
             else:
                 now_ts = time.time()
                 last_ts = LAST_HOLD_LOG.get(symbol, 0)
-                if now_ts - last_ts >= 900:
+                if now_ts - last_ts >= 300:
                     reason = getattr(strat, "last_hold_reason", "sem motivo detalhado")
                     log.info(f"⏸️ [{symbol}] HOLD | {reason}")
                     LAST_HOLD_LOG[symbol] = now_ts

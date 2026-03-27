@@ -18,8 +18,8 @@ class TradingStrategy:
         self._dirty_15m = False
         
         # --- PARÂMETROS OTIMIZADOS (SNIPER MODE) ---
-        self.min_volatilidade_pct = 0.0022  # 0.22%
-        self.volume_multiplier = 2.5        # 250% acima da média
+        self.min_volatilidade_pct = 0.0014  # 0.14%
+        self.volume_multiplier = 1.6        # 160% acima da media
         self.ema_1m_trend = 20
         self.ema_15m_period = 200
         self.min_15m_candles = 200
