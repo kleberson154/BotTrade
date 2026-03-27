@@ -91,6 +91,42 @@ class RiskManager:
         """Retorna a soma de todo o PnL acumulado no histórico"""
         return sum(self.stats["pnl_history"].values())
     
+    def is_trading_allowed(self):
+        """Valida se o bot pode fazer trades baseado em WR e PnL acumulado."""
+        total, wins, protected, wr, sr, pnl_net = self.get_performance_stats()
+        
+        # Sem trades ainda, permite
+        if total == 0:
+            return True, "STARTUP"
+        
+        # WR muito baixo: bloqueia
+        if wr < 32.0:
+            return False, f"⛔ WR crítico {wr:.1f}% (<32%) - BLOQUEADO"
+        
+        # WR entre 32-38: permite mas com leverage reduzida
+        if wr < 38.0:
+            return True, f"⚠️ WR baixo {wr:.1f}% - LEVERAGE REDUZIDA 50%"
+        
+        # WR entre 38-42: permite com leverage normal
+        if wr < 42.0:
+            return True, f"📊 WR moderado {wr:.1f}% - NORMAL"
+        
+        # WR >= 42: permite com leverage máximo
+        return True, f"✅ WR forte {wr:.1f}% - MÁXIMO"
+    
+    def get_leverage_multiplier(self):
+        """Retorna multiplicador de alavancagem baseado em WR."""
+        total, wins, protected, wr, sr, pnl_net = self.get_performance_stats()
+        
+        if total == 0 or wr >= 42.0:
+            return 1.0  # 100% da alavancagem normal
+        elif wr >= 38.0:
+            return 1.0  # 100%
+        elif wr >= 32.0:
+            return 0.5  # 50% da alavancagem (mais conservador)
+        else:
+            return 0.0  # Bloqueado
+    
     def add_historical_trade(self, symbol, pnl_net):
         if symbol not in self.performance:
             self.performance[symbol] = []

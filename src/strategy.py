@@ -35,6 +35,37 @@ class TradingStrategy:
         self.allow_long = True
         self.allow_short = True
         
+        # Regime-aware parameters
+        self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
+        self.regime_params_cold = {
+            "min_volatilidade_pct": 0.0008,  # 0.08% - reduzido para frio
+            "volume_multiplier": 1.2,        # 120% - reduzido para frio
+            "min_adx": 16,                   # reduzido para frio
+            "atr_multiplier_sl": 1.5,        # SL mais apertado
+            "leverage": 5.0,                 # alavancagem reduzida
+        }
+        self.regime_params_lateral = {
+            "min_volatilidade_pct": 0.0010,  # 0.10%
+            "volume_multiplier": 1.4,        # 140%
+            "min_adx": 12,                   # ADX muito baixo para lateral
+            "atr_multiplier_sl": 1.3,
+            "leverage": 3.0,                 # alavancagem baixa
+        }
+        self.regime_params_normal = {
+            "min_volatilidade_pct": 0.0014,  # padrão
+            "volume_multiplier": 1.6,        # padrão
+            "min_adx": 25,                   # padrão
+            "atr_multiplier_sl": 1.8,
+            "leverage": 10.0,
+        }
+        self.regime_params_hot = {
+            "min_volatilidade_pct": 0.0022,  # original
+            "volume_multiplier": 2.5,        # original
+            "min_adx": 30,                   # original
+            "atr_multiplier_sl": 2.0,
+            "leverage": 15.0,
+        }
+        
         # Controle de Posição
         self.is_positioned = False
         self.side = None 
@@ -54,9 +85,51 @@ class TradingStrategy:
             return float(val)
         except: return 0.0
 
+    def detect_market_regime(self, df_1m):
+        """Detecta regime de mercado baseado em ATR e ADX."""
+        if len(df_1m) < 30:
+            return "NORMAL"
+        
+        recent = df_1m.tail(30)
+        tr = pd.concat([recent['high'] - recent['low'],
+                        (recent['high'] - recent['close'].shift()).abs(),
+                        (recent['low'] - recent['close'].shift()).abs()], axis=1).max(axis=1)
+        atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
+        adx = self._calc_adx_single(df_1m).iloc[-1]
+        
+        # COLD: ATR muito baixo
+        if atr_pct < 0.0010 and adx < 20:
+            return "COLD"
+        # LATERAL: ADX muito baixo (sem tendência)
+        elif adx < 15 and atr_pct < 0.0018:
+            return "LATERAL"
+        # HOT: ATR muito alto
+        elif atr_pct >= 0.0022 and adx >= 30:
+            return "HOT"
+        # NORMAL: tudo dentro da normalidade
+        else:
+            return "NORMAL"
+    
+    def apply_regime_params(self):
+        """Aplica parâmetros baseados no regime detectado."""
+        params = {
+            "COLD": self.regime_params_cold,
+            "LATERAL": self.regime_params_lateral,
+            "NORMAL": self.regime_params_normal,
+            "HOT": self.regime_params_hot,
+        }.get(self.current_regime, self.regime_params_normal)
+        
+        self.min_volatilidade_pct = params["min_volatilidade_pct"]
+        self.volume_multiplier = params["volume_multiplier"]
+        self.min_adx = params["min_adx"]
+
     def calculate_indicators(self, df_1m, df_15m):
         """Calcula apenas o necessário para a tomada de decisão atual."""
         results = {}
+        
+        # Detecta regime e aplica parâmetros
+        self.current_regime = self.detect_market_regime(df_1m)
+        self.apply_regime_params()
         
         # M15 Indicators
         ema_200_15 = df_15m['close'].ewm(span=200, adjust=False).mean()
@@ -65,6 +138,7 @@ class TradingStrategy:
         # Regime Filter (EMA 50 vs 200)
         ema_50_15 = df_15m['close'].ewm(span=50, adjust=False).mean().iloc[-1]
         results['regime_gap'] = abs(ema_50_15 - results['ema_200_15']) / df_15m['close'].iloc[-1]
+        results['market_regime'] = self.current_regime
 
         # M1 Indicators
         results['ema_20_1m'] = df_1m['close'].ewm(span=20, adjust=False).mean().iloc[-1]

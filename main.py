@@ -36,6 +36,8 @@ SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
 ULTIMO_CHECK_CALOR = 0
 LAST_HOLD_LOG = {}
+LAST_REGIME_LOG = 0
+REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
 
 # --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) ---
 COIN_CONFIGS = {
@@ -142,7 +144,14 @@ def handle_signal_logic(message):
 # =========================================================
 
 def execute_new_trade(symbol, signal, price, atr):
-    get_cached_data() 
+    get_cached_data()
+    
+    # 1. Validação de permissão de trading por WR/PnL
+    allowed, reason = risk_mgr.is_trading_allowed()
+    if not allowed:
+        log.warning(reason)
+        return
+    
     if len(cache_positions['data']) >= risk_mgr.max_positions: return
     if cache_balance['avail'] < 5.0: return 
 
@@ -150,8 +159,10 @@ def execute_new_trade(symbol, signal, price, atr):
         strat = strategies[symbol]
         side = "Buy" if signal == "BUY" else "Sell"
         
-        # 1. Parâmetros de Risco
-        lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
+        # 1. Parâmetros de Risco com leverage dinâmico
+        base_lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
+        lev_mult = risk_mgr.get_leverage_multiplier()
+        lev = int(base_lev * lev_mult)
         
         # SL adaptativo baseado no ATR_MULTIPLIER do backtest
         atr_mult = getattr(strat, "atr_multiplier_sl", 1.8)
@@ -360,7 +371,14 @@ def create_and_subscribe_websocket():
     return ws_client
 
 def check_market_heat():
+    global ULTIMO_CHECK_CALOR, LAST_REGIME_LOG
     log.info("🔥 --- TERMÔMETRO DE VOLATILIDADE ---")
+    
+    num_cold = 0
+    num_lateral = 0
+    num_normal = 0
+    num_hot = 0
+    
     for symbol in SYMBOLS:
         strat = strategies.get(symbol)
         if not strat: continue
@@ -377,9 +395,30 @@ def check_market_heat():
             if pd.isna(atr_pct):
                 continue
             pct = (atr_pct / threshold) * 100 if threshold > 0 else 0
-            status = "✅ DISPARADO" if atr_pct >= threshold else "🟠 ESQUENTANDO" if pct > 80 else "❄️ FRIO"
+            regime = strat.current_regime
+            
+            if regime == "COLD":
+                num_cold += 1
+                status = "🧊 FRIO"
+            elif regime == "LATERAL":
+                num_lateral += 1
+                status = "〰️ LATERAL"
+            elif regime == "HOT":
+                num_hot += 1
+                status = "🔥 QUENTE"
+            else:
+                num_normal += 1
+                status = "✅ NORMAL"
+            
             log.info(f"{symbol:10} | ATR%: {atr_pct:.5f} ({pct:5.1f}%) | {status}")
+    
     log.info("-------------------------------------")
+    now_ts = time.time()
+    if now_ts - LAST_REGIME_LOG >= 600:  # 10 minutos
+        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
+        log.info(f"📊 REGIME SUMMARY | Cold:{num_cold} Lateral:{num_lateral} Normal:{num_normal} Hot:{num_hot}")
+        log.info(f"💰 PERFORMANCE | WR:{wr:.1f}% | Trades:{total} | PnL:{pnl_net:+.2f}")
+        LAST_REGIME_LOG = now_ts
 
 def start_bot():
     global ULTIMO_CHECK_VIVO, ws, cache_balance, message_queue, risk_mgr, ULTIMO_CHECK_CALOR
