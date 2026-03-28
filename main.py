@@ -145,13 +145,6 @@ def handle_signal_logic(message):
 
 def execute_new_trade(symbol, signal, price, atr):
     get_cached_data()
-    
-    # 1. Validação de permissão de trading por WR/PnL
-    allowed, reason = risk_mgr.is_trading_allowed()
-    if not allowed:
-        log.warning(reason)
-        return
-    
     if len(cache_positions['data']) >= risk_mgr.max_positions: return
     if cache_balance['avail'] < 5.0: return 
 
@@ -450,7 +443,16 @@ def debug_sanity_check():
         log.info(f"{symbol}: Invert={getattr(strat, 'invert_signal', False)} | ATR={getattr(strat, 'atr_multiplier_sl', 1.8)}")
 
 if __name__ == "__main__":
+    # Resetar stats de performance (WR check removido)
+    risk_mgr.stats = {
+        'wins': 0,
+        'losses': 0,
+        'protected': 0,
+        'total_trades': 0,
+        'pnl_history': {}
+    }
     log.info("📥 Warm-up Inicial...")
+    log.info("✅ Stats resetados - WR check desativado")
     for symbol in SYMBOLS:
         strat = strategies[symbol]
         for tf, tf_id in [("1m", 1), ("15m", 15)]:
