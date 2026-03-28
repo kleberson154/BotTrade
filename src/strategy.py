@@ -38,32 +38,36 @@ class TradingStrategy:
         # Regime-aware parameters
         self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
         self.regime_params_cold = {
-            "min_volatilidade_pct": 0.0008,  # 0.08% - reduzido para frio
-            "volume_multiplier": 1.2,        # 120% - reduzido para frio
-            "min_adx": 16,                   # reduzido para frio
+            "min_volatilidade_pct": 0.0005,  # 0.05% - RELAXED: volatilidade opcional
+            "volume_multiplier": 1.0,        # sem requisito volume (entra com sinal)
+            "min_adx": 14,                   # apenas tendência leve
             "atr_multiplier_sl": 1.5,        # SL mais apertado
             "leverage": 5.0,                 # alavancagem reduzida
+            "require_volume_peak": False,    # ✅ Permite entrada mesmo com volume baixo
         }
         self.regime_params_lateral = {
-            "min_volatilidade_pct": 0.0010,  # 0.10%
-            "volume_multiplier": 1.4,        # 140%
-            "min_adx": 12,                   # ADX muito baixo para lateral
+            "min_volatilidade_pct": 0.0008,  # 0.08% - RELAXED: volatilidade low-bar
+            "volume_multiplier": 1.2,        # 120% - requisito relaxado
+            "min_adx": 12,                   # ADX muito baixo = sinal técnico suficiente
             "atr_multiplier_sl": 1.3,
             "leverage": 3.0,                 # alavancagem baixa
+            "require_volume_peak": False,    # ✅ Permite entrada por rompimento
         }
         self.regime_params_normal = {
-            "min_volatilidade_pct": 0.0014,  # padrão
-            "volume_multiplier": 1.6,        # padrão
-            "min_adx": 25,                   # padrão
+            "min_volatilidade_pct": 0.0012,  # ligeiramente relaxado (era 0.0014)
+            "volume_multiplier": 1.4,        # um pouco menos rígido (era 1.6)
+            "min_adx": 22,                   # um pouco menos rígido (era 25)
             "atr_multiplier_sl": 1.8,
             "leverage": 10.0,
+            "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
         }
         self.regime_params_hot = {
-            "min_volatilidade_pct": 0.0022,  # original
-            "volume_multiplier": 2.5,        # original
-            "min_adx": 30,                   # original
+            "min_volatilidade_pct": 0.0020,  # ligeiramente relaxado (era 0.0022)
+            "volume_multiplier": 2.2,        # um pouco menos rígido (era 2.5)
+            "min_adx": 28,                   # relaxado (era 30)
             "atr_multiplier_sl": 2.0,
             "leverage": 15.0,
+            "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
         }
         
         # Controle de Posição
@@ -122,6 +126,7 @@ class TradingStrategy:
         self.min_volatilidade_pct = params["min_volatilidade_pct"]
         self.volume_multiplier = params["volume_multiplier"]
         self.min_adx = params["min_adx"]
+        self.require_volume_peak = params.get("require_volume_peak", True)  # Novo: controla se volume é obrigatório
 
     def calculate_indicators(self, df_1m, df_15m):
         """Calcula apenas o necessário para a tomada de decisão atual."""
@@ -197,13 +202,18 @@ class TradingStrategy:
                 self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.0015)"
                 return "HOLD", 0
 
-            # 3. Lógica de Decisão
+            # 3. Lógica de Decisão (Regime-Aware)
             raw_signal = "HOLD"
             dist_sl = 0
             
             pico_vol = curr_vol > (avg_vol * self.volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= self.min_adx
+            
+            # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
+            if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
+                # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
+                pico_vol = True
 
             if tendencia_forte and volat_ok and pico_vol:
                 # M15 Context
