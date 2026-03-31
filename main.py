@@ -152,7 +152,11 @@ def execute_new_trade(symbol, signal, price, atr):
         strat = strategies[symbol]
         side = "Buy" if signal == "BUY" else "Sell"
         
-        # 1. Parâmetros de Risco com leverage dinâmico
+        # 1. Ajusta leverage baseado no regime atual
+        regime = strat.current_regime  # Obtém regime da estratégia
+        risk_mgr.set_leverage_for_regime(regime)
+        
+        # 2. Parâmetros de Risco com leverage dinâmico
         base_lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
         lev_mult = risk_mgr.get_leverage_multiplier()
         lev = int(base_lev * lev_mult)
@@ -162,7 +166,7 @@ def execute_new_trade(symbol, signal, price, atr):
         dist_sl = (atr / price) * atr_mult
         sl = price * (1 - dist_sl) if side == "Buy" else price * (1 + dist_sl)
         
-        # 2. TP de Segurança (Longo conforme o backtest)
+        # 3. TP de Segurança (Longo conforme o backtest)
         tp_longo = price * (1.20 if side == "Buy" else 0.80)
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
@@ -170,7 +174,7 @@ def execute_new_trade(symbol, signal, price, atr):
 
         prepare_leverage(symbol, lev)
         
-        # 3. Envio da Ordem
+        # 4. Envio da Ordem
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 

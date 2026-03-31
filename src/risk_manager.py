@@ -6,10 +6,13 @@ class RiskManager:
     # 1. INICIALIZAÇÃO E CONFIGURAÇÕES DE PRECISÃO
     # =========================================================
     def __init__(self):
-        self.max_positions = 3  
+        self.max_positions = 3
+        self.fixed_leverage = 10.0  # Leverage base (será ajustada por regime)
         self.total_pnl_bruto = 0.0
+        self.total_pnl = 0.0  # PnL acumulado total
         self.total_fees = 0.0
         self.trades_history = []
+        self.performance = {}  # Rastreamento de performance por moeda
         
         self.stats = {
             'wins': 0,
@@ -150,6 +153,16 @@ class RiskManager:
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)
     # =========================================================
+    def set_leverage_for_regime(self, regime):
+        """Define alavancagem baseada no regime detectado."""
+        regime_leverage_map = {
+            "COLD": 5.0,
+            "LATERAL": 3.0,
+            "NORMAL": 10.0,
+            "HOT": 15.0,
+        }
+        self.fixed_leverage = regime_leverage_map.get(regime, 10.0)
+    
     def get_dynamic_risk_params(self, entry_price, sl_price, total_balance):
         """
         Calcula quanto de 'Qty' (lote) comprar para usar a banca de $20 com 20x.
