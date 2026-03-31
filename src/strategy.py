@@ -62,12 +62,12 @@ class TradingStrategy:
             "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
         }
         self.regime_params_hot = {
-            "min_volatilidade_pct": 0.0020,  # ligeiramente relaxado (era 0.0022)
-            "volume_multiplier": 2.2,        # um pouco menos rígido (era 2.5)
-            "min_adx": 28,                   # relaxado (era 30)
+            "min_volatilidade_pct": 0.0018,  # Relaxado: agora é base para HOT
+            "volume_multiplier": 2.0,        # Relaxado: x2.0 em vez de 2.2
+            "min_adx": 18,                   # Relaxado: 18 em vez de 28 (volatilidade já é suficiente)
             "atr_multiplier_sl": 2.0,
             "leverage": 15.0,
-            "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
+            "require_volume_peak": True,     # Mantém volume requirement
         }
         
         # Controle de Posição
@@ -107,8 +107,8 @@ class TradingStrategy:
         # LATERAL: ADX muito baixo (sem tendência)
         elif adx < 15 and atr_pct < 0.0018:
             return "LATERAL"
-        # HOT: ATR muito alto
-        elif atr_pct >= 0.0022 and adx >= 30:
+        # HOT: ATR muito alto (volatilidade reconhecida) - sem requisito ADX
+        elif atr_pct >= 0.0018:
             return "HOT"
         # NORMAL: tudo dentro da normalidade
         else:
