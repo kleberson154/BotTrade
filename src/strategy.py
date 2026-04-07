@@ -24,8 +24,8 @@ class TradingStrategy:
         self.ema_15m_period = 200
         self.min_15m_candles = 200
         self.min_adx = 25
-        self.rsi_overbought = 75            # Filtro de exaustão
-        self.rsi_oversold = 25              # Filtro de exaustão
+        self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
+        self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
         self.min_pnl_be = 0.007             # 0.7% para mover Stop
         self.distancia_respiro = 0.015      # 1.5% de Trailing
@@ -43,7 +43,7 @@ class TradingStrategy:
             "min_adx": 20,                   # AUMENTADO: tendência REAL (não lateral)
             "atr_multiplier_sl": 1.5,        # SL mais apertado
             "leverage": 5.0,                 # alavancagem reduzida
-            "require_volume_peak": False,    # ✅ Permite entrada mesmo com volume baixo
+            "require_volume_peak": True,     # ✅ ATIVADO: requer volume mesmo em COLD
         }
         self.regime_params_lateral = {
             "min_volatilidade_pct": 0.0008,  # 0.08% - RELAXED: volatilidade low-bar
@@ -51,12 +51,12 @@ class TradingStrategy:
             "min_adx": 18,                   # AUMENTADO: requer tendência mais forte
             "atr_multiplier_sl": 1.3,
             "leverage": 3.0,                 # alavancagem baixa
-            "require_volume_peak": False,    # ✅ Permite entrada por rompimento
+            "require_volume_peak": True,     # ✅ ATIVADO: requer volume em LATERAL
         }
         self.regime_params_normal = {
             "min_volatilidade_pct": 0.0012,  # ligeiramente relaxado (era 0.0014)
             "volume_multiplier": 1.4,        # um pouco menos rígido (era 1.6)
-            "min_adx": 22,                   # um pouco menos rígido (era 25)
+            "min_adx": 25,                   # AUMENTADO para 25: filtra mercados laterais
             "atr_multiplier_sl": 1.8,
             "leverage": 10.0,
             "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
@@ -64,7 +64,7 @@ class TradingStrategy:
         self.regime_params_hot = {
             "min_volatilidade_pct": 0.0018,  # Relaxado: agora é base para HOT
             "volume_multiplier": 2.0,        # Relaxado: x2.0 em vez de 2.2
-            "min_adx": 18,                   # Relaxado: 18 em vez de 28 (volatilidade já é suficiente)
+            "min_adx": 25,                   # AUMENTADO para 25: requer tendência clara
             "atr_multiplier_sl": 2.0,
             "leverage": 15.0,
             "require_volume_peak": True,     # Mantém volume requirement
@@ -156,6 +156,22 @@ class TradingStrategy:
                         (df_1m['low'] - df_1m['close'].shift()).abs()], axis=1).max(axis=1)
         results['atr_pct'] = tr.rolling(14).mean().iloc[-1] / df_1m['close'].iloc[-1]
         
+        # Volume Divergence: Confirma se volume está apoiando a direção do preço
+        # Retorna True se volume está CRESCENDO na última vela (suporta movimento de preço)
+        if len(df_1m) >= 5:
+            vol_recent = df_1m['volume'].iloc[-1]
+            vol_avg5 = df_1m['volume'].iloc[-5:-1].mean()
+            vol_trend = vol_recent > vol_avg5  # True se volume increasing
+            
+            # Calcula também o momentum de volume (aceleração)
+            vol_momentum = vol_recent / vol_avg5 if vol_avg5 > 0 else 1.0
+            
+            results['volume_divergence_ok'] = vol_trend and vol_momentum > 0.95
+            results['volume_momentum'] = vol_momentum
+        else:
+            results['volume_divergence_ok'] = True  # Se dados insuficientes, permite
+            results['volume_momentum'] = 1.0
+        
         return results
 
     def _calc_rsi_single(self, df, period=14):
@@ -209,13 +225,14 @@ class TradingStrategy:
             pico_vol = curr_vol > (avg_vol * self.volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= self.min_adx
+            volume_confirmado = ind.get('volume_divergence_ok', True)  # Volume não deve estar em queda extrema
             
             # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
             if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
                 # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
 
-            if tendencia_forte and volat_ok and pico_vol:
+            if tendencia_forte and volat_ok and pico_vol and volume_confirmado:
                 # M15 Context
                 m15_last = self.data_15m.iloc[-1]
                 m15_is_green = m15_last['close'] > m15_last['open']
@@ -224,16 +241,43 @@ class TradingStrategy:
                 # Respiro/Máximas
                 max_15m = self.data_1m['high'].iloc[-16:-1].max()
                 min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                
+                # Clean Breakout Filter: Valida se o breakout é sólido ou apenas um rebote
+                is_clean_breakout_up = False
+                is_clean_breakout_down = False
+                
+                if curr_price > max_15m:
+                    # Verificar se o movimento para cima é sólido:
+                    # 1. Preço está claramente acima (não na borda)
+                    # 2. O movimento foi com volume crescente
+                    # 3. A vela anterior também estava tentando sair
+                    breakout_margin = (curr_price - max_15m) / max_15m
+                    prev_price = self.data_1m['close'].iloc[-2] if len(self.data_1m) >= 2 else max_15m
+                    is_clean_breakout_up = (
+                        breakout_margin > 0.0001 and  # Mínimo 0.01% acima
+                        volume_confirmado and  # Volume deve estar alto
+                        prev_price > max_15m * 0.995  # Vela anterior também acima
+                    )
+                
+                if curr_price < min_15m:
+                    # Verificar se o movimento para baixo é sólido
+                    breakout_margin = (min_15m - curr_price) / min_15m
+                    prev_price = self.data_1m['close'].iloc[-2] if len(self.data_1m) >= 2 else min_15m
+                    is_clean_breakout_down = (
+                        breakout_margin > 0.0001 and  # Mínimo 0.01% abaixo
+                        volume_confirmado and  # Volume deve estar alto
+                        prev_price < min_15m * 1.005  # Vela anterior também abaixo
+                    )
 
                 # Condição de COMPRA
-                if curr_price > max_15m and curr_price > ind['ema_200_15'] and m15_is_green:
+                if is_clean_breakout_up and curr_price > ind['ema_200_15'] and m15_is_green:
                     if ind['rsi_1m'] < self.rsi_overbought: # Filtro de exaustão
                         raw_signal = "BUY"
                         min_rec = self.data_1m['low'].tail(10).min()
                         dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
 
                 # Condição de VENDA
-                elif curr_price < min_15m and curr_price < ind['ema_200_15'] and m15_is_red:
+                elif is_clean_breakout_down and curr_price < ind['ema_200_15'] and m15_is_red:
                     if ind['rsi_1m'] > self.rsi_oversold: # Filtro de exaustão
                         raw_signal = "SELL"
                         max_rec = self.data_1m['high'].tail(10).max()
@@ -260,9 +304,12 @@ class TradingStrategy:
                 if not volat_ok:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
                 if not pico_vol:
-                    motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier} da media({avg_vol:.2f})")
+                    motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier}*avg({avg_vol:.2f})")
+                if not volume_confirmado:
+                    vol_momentum = ind.get('volume_momentum', 1.0)
+                    motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")
                 if len(motivos) == 0:
-                    motivos.append("sem rompimento m1/m15 ou RSI de exaustao")
+                    motivos.append("sem clean breakout ou RSI exaustao")
                 self.last_hold_reason = " | ".join(motivos)
             elif final_signal != "HOLD":
                 self.last_hold_reason = (
