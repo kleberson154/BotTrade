@@ -40,7 +40,7 @@ class TradingStrategy:
         self.regime_params_cold = {
             "min_volatilidade_pct": 0.0005,  # 0.05% - RELAXED: volatilidade opcional
             "volume_multiplier": 1.0,        # sem requisito volume (entra com sinal)
-            "min_adx": 14,                   # apenas tendência leve
+            "min_adx": 20,                   # AUMENTADO: tendência REAL (não lateral)
             "atr_multiplier_sl": 1.5,        # SL mais apertado
             "leverage": 5.0,                 # alavancagem reduzida
             "require_volume_peak": False,    # ✅ Permite entrada mesmo com volume baixo
@@ -48,7 +48,7 @@ class TradingStrategy:
         self.regime_params_lateral = {
             "min_volatilidade_pct": 0.0008,  # 0.08% - RELAXED: volatilidade low-bar
             "volume_multiplier": 1.2,        # 120% - requisito relaxado
-            "min_adx": 12,                   # ADX muito baixo = sinal técnico suficiente
+            "min_adx": 18,                   # AUMENTADO: requer tendência mais forte
             "atr_multiplier_sl": 1.3,
             "leverage": 3.0,                 # alavancagem baixa
             "require_volume_peak": False,    # ✅ Permite entrada por rompimento
