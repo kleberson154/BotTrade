@@ -86,7 +86,7 @@ class DeepSimulator:
             self.strat.add_new_candle("1m", candle)
 
         if self.verbose:
-            print(f"🔄 Iniciando Simulação: {len(self.df)} velas...")
+            print(f"[...] Iniciando Simulacao: {len(self.df)} velas...")
 
         ts_arr = self.df['timestamp'].to_numpy()
         open_arr = self.df['open'].to_numpy()

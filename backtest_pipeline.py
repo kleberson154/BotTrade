@@ -235,7 +235,7 @@ def run_backtest_single_pass(label):
     for i, symbol in enumerate(moedas, 1):
         target_file = find_symbol_file(symbol)
         if not target_file:
-            print(f"[{i:2d}/{len(moedas)}] {symbol:11s}: ⚠️ Arquivo não encontrado")
+            print(f"[{i:2d}/{len(moedas)}] {symbol:11s}: [ARQUIVO NULO]")
             continue
 
         try:
@@ -275,10 +275,10 @@ def run_backtest_single_pass(label):
                 f"[{i:2d}/{len(moedas)}] {symbol:11s}: "
                 f"T: {resumo['trades']:3d} | WR:{resumo['wr']:5.1%} | "
                 f"PnL: {resumo['pnl_total']:+6.2%} | "
-                f"✅W:{resumo['wins']} 🛡️P:{resumo['protected']} ❌L:{resumo['losses']}"
+                f"W:{resumo['wins']} P:{resumo['protected']} L:{resumo['losses']}"
             )
         except Exception as e:
-            print(f"❌ Erro ao processar {symbol}: {e}")
+            print(f"[ERRO] Falha ao processar {symbol}: {e}")
 
     return results
 
@@ -335,7 +335,7 @@ def run_full_backtest():
         summary_txt_path='backtest_summary_90d.txt',
         title='BACKTEST SUMMARY - 90 DIAS x 12 MOEDAS'
     )
-    print("\n✅ Relatórios salvos: backtest_report_90d.csv e backtest_summary_90d.txt")
+    print("\n[OK] Relatorios salvos: backtest_report_90d.csv e backtest_summary_90d.txt")
 
 
 if __name__ == "__main__":
