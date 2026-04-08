@@ -30,6 +30,7 @@ class TradingStrategy:
         self.min_pnl_be = 0.007             # 0.7% para mover Stop
         self.distancia_respiro = 0.015      # 1.5% de Trailing
         self.use_regime_filter = True       # Ativado por padrão para segurança
+        self.require_volume_peak = True     # Inicializa como True (será overridden por regime)
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
@@ -210,7 +211,7 @@ class TradingStrategy:
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= self.min_adx
             
-            # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
+            # [SIGNAL-FIRST MODE] Para regimes frios: relaxa volume se há sinal técnico
             if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
                 # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
@@ -273,7 +274,7 @@ class TradingStrategy:
             return final_signal, dist_sl
 
         except Exception as e:
-            log.error(f"❌ Erro check_signal ({self.symbol}): {e}")
+            log.error(f"[ERRO] Erro check_signal ({self.symbol}): {e}")
             return "HOLD", 0
 
     # =========================================================

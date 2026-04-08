@@ -214,7 +214,11 @@ def apply_config_to_strategy(strat, conf):
     strat.atr_multiplier_sl = conf['atr_mult']
     strat.min_pnl_be = conf['min_pnl_be']
     strat.distancia_respiro = conf['dist_respiro']
-    strat.min_adx = conf['min_adx']  # Now uses regime-adaptive values (22-24) instead of high values (28-34)
+    # ⚠️ NOTE: min_adx set here is OVERRIDDEN during check_signal()!
+    # Each call to check_signal() → calculate_indicators() → apply_regime_params()
+    # which sets min_adx to regime-specific values (COLD:20, LATERAL:18, NORMAL:22, HOT:18)
+    # So pipeline changes to min_adx have NO EFFECT on backtest results!
+    strat.min_adx = conf['min_adx']
     strat.use_regime_filter = conf.get('use_regime_filter', False)
     strat.regime_ema_fast = conf.get('regime_ema_fast', 50)
     strat.regime_ema_slow = conf.get('regime_ema_slow', 200)
