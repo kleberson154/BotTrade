@@ -200,7 +200,7 @@ def find_symbol_file(symbol):
 
 def check_all_data_ready():
     if not os.path.exists(BASE_DIR):
-        print(f"⚠️ Erro: Pasta não encontrada em {BASE_DIR}")
+        print(f"[ERRO] Pasta nao encontrada em {BASE_DIR}")
         return False, SYMBOLS
 
     missing = []
