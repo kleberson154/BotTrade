@@ -30,7 +30,7 @@ API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 _mode = os.getenv("BYBIT_MODE", "demo").lower()
 IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
-SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,AVAXUSDT,XRPUSDT,ADAUSDT,NEARUSDT,DOTUSDT,LINKUSDT,SUIUSDT,OPUSDT").split(",")
+SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT").split(",")
 ULTIMO_CHECK_VIVO = 0 
 SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
@@ -42,17 +42,14 @@ REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
 # --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) ---
 COIN_CONFIGS = {
     "BTCUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "ETHUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 30, "invert_signal": True, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
-    "SOLUSDT":  {"atr_multiplier_sl": 2.2, "min_pnl_be": 0.005, "distancia_respiro": 0.022, "min_adx": 34, "invert_signal": False, "use_regime_filter": False, "signal_check_interval": 6},
-    "AVAXUSDT": {"atr_multiplier_sl": 1.6, "min_pnl_be": 0.0045, "distancia_respiro": 0.012, "min_adx": 24, "invert_signal": False, "use_regime_filter": True, "signal_check_interval": 4},
     "XRPUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "ADAUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": False, "use_regime_filter": True, "signal_check_interval": 5},
     "NEARUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "DOTUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
     "LINKUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 30, "invert_signal": True, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
     "SUIUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
     "OPUSDT":   {"atr_multiplier_sl": 2.0, "min_pnl_be": 0.005, "distancia_respiro": 0.018, "min_adx": 32, "invert_signal": False, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
 }
+
+# --- BEST PERFORMERS ONLY (6 coins: 30.87% WR, +20.27% PnL) ---
 
 notifier = TelegramNotifier()
 strategies = {}
@@ -70,7 +67,7 @@ session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO
 executor = ExecutionManager(session)
 message_queue = Queue()
 
-MASTERS = ["BTCUSDT", "ETHUSDT"]
+MASTERS = ["BTCUSDT"]  # Only master signals from active coins
 for m in MASTERS:
     if m not in strategies:
         strategies[m] = TradingStrategy(symbol=m, notifier=notifier)
@@ -237,7 +234,7 @@ def update_remote_sl(symbol, new_sl):
 def get_market_sentiment():
     try:
         results = []
-        for symbol in ["BTCUSDT", "ETHUSDT"]:
+        for symbol in ["BTCUSDT", "XRPUSDT"]:  # Updated: use only active coins (BTC + XRP)
             strat = strategies.get(symbol)
             if strat is None or strat.data_15m is None or len(strat.data_15m) < 20: continue
             df = strat.data_15m
