@@ -15,7 +15,8 @@ from data.DeepSim_Engine import DeepSimulator
 BASE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'coins')
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT",  "AVAXUSDT", "XRPUSDT"
-    ,"ADAUSDT", "NEARUSDT", "DOTUSDT", "LINKUSDT", "SUIUSDT", "OPUSDT"
+    # ,"ADAUSDT"  # DISABLED: Worst performer (-22.57% PnL, 17.4% WR) - test portfolio without it
+    ,"NEARUSDT", "DOTUSDT", "LINKUSDT", "SUIUSDT", "OPUSDT"
 ]
 
 DEFAULT_CONFIG = {
