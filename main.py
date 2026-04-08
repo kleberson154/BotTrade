@@ -166,8 +166,17 @@ def execute_new_trade(symbol, signal, price, atr):
         dist_sl = (atr / price) * atr_mult
         sl = price * (1 - dist_sl) if side == "Buy" else price * (1 + dist_sl)
         
-        # 3. TP de Segurança (Longo conforme o backtest)
-        tp_longo = price * (1.20 if side == "Buy" else 0.80)
+        # 3. TP Dinâmico baseado em Regime + Volatilidade + ADX
+        # Obter ATR% e ADX da estratégia se disponível
+        ind = {}
+        try:
+            ind = strat.calculate_indicators(strat.data_1m.tail(100), strat.data_15m.tail(250)) if hasattr(strat, 'data_1m') else {}
+        except:
+            ind = {}
+        
+        atr_pct = ind.get('atr_pct', 0.0015)  # Default: 0.15%
+        adx = ind.get('adx_1m', 22)  # Default: 22
+        tp_dinamic = risk_mgr.calculate_dynamic_tp(price, side, atr_pct, adx, regime=regime)
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
@@ -178,7 +187,7 @@ def execute_new_trade(symbol, signal, price, atr):
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 
-            takeProfit=str(round(tp_longo, p_prec)), 
+            takeProfit=str(round(tp_dinamic, p_prec)), 
             stopLoss=str(round(sl, p_prec)),
             tpOrderType="Market", slOrderType="Market", tpslMode="Full"
         )
@@ -191,7 +200,8 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.current_qty = float(qty)
             strat.partial_taken = False
             
-            notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL: {round(sl, p_prec)} (Mult: {atr_mult})")
+            tp_pct = abs((tp_dinamic - price) / price) * 100
+            notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL: {round(sl, p_prec)} | 🎯 TP: {round(tp_dinamic, p_prec)} (DYN: +{tp_pct:.1f}%)")
             
     except Exception as e:
         log.error(f"Erro abertura {symbol}: {e}")

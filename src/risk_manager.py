@@ -19,7 +19,15 @@ class RiskManager:
             'losses': 0,
             'protected': 0, # <-- Nova categoria
             'total_trades': 0,
-            'pnl_history': {}
+            'pnl_history': {},
+            'exit_methods': {  # Auditoria de como cada trade saiu
+                'tp_hit': 0,      # Saiu no TP
+                'sl_hit': 0,      # Saiu no SL (mesmo que com lucro)
+                'sl_profit': 0,   # Saiu no SL MAS com lucro
+                'sl_loss': 0,     # Saiu no SL com prejuízo
+                'manual_close': 0, # Fechado manualmente
+                'other': 0        # Outros motivos
+            }
         }
         
         # Mapeamento de precisão da Bybit: (Quantidade, Preço)
@@ -52,6 +60,36 @@ class RiskManager:
     
         self.stats['pnl_history'][symbol] = self.stats['pnl_history'].get(symbol, 0) + pnl_liquido
         return status
+
+    def record_exit_method(self, method="other", pnl=0):
+        """
+        Registra como um trade foi fechado.
+        method: 'tp_hit', 'sl_hit', 'manual_close', 'other'
+        """
+        if method == "sl_hit":
+            self.stats['exit_methods']['sl_hit'] += 1
+            if pnl > 0:
+                self.stats['exit_methods']['sl_profit'] += 1
+            else:
+                self.stats['exit_methods']['sl_loss'] += 1
+        elif method in self.stats['exit_methods']:
+            self.stats['exit_methods'][method] += 1
+
+    def get_exit_methods_summary(self):
+        """Retorna resumo dos métodos de saída para auditoria"""
+        em = self.stats['exit_methods']
+        total_closed = em['tp_hit'] + em['sl_hit'] + em['manual_close'] + em['other']
+        
+        summary = {
+            'tp_saidas': em['tp_hit'],
+            'sl_saidas_total': em['sl_hit'],
+            'sl_com_lucro': em['sl_profit'],
+            'sl_com_prejuizo': em['sl_loss'],
+            'fechos_manuais': em['manual_close'],
+            'outros': em['other'],
+            'total_fechados': total_closed
+        }
+        return summary
 
     def get_performance_stats(self):
         """Retorna estatísticas detalhadas para o Telegram"""
@@ -200,3 +238,51 @@ class RiskManager:
             tp = price - (distancia_sl * 2.5)
             
         return sl, tp
+
+    def calculate_dynamic_tp(self, price, side, atr_pct, adx, regime="NORMAL"):
+        """
+        Calcula TP dinâmico baseado em regime, volatilidade (ATR%) e trend force (ADX).
+        
+        Regimes:
+        - COLD: ATR% < 0.10%, TP% = 12-15%
+        - LATERAL: 0.10% < ATR% < 0.18%, TP% = 14-18%
+        - NORMAL: ATR% padrão, TP% = 18-22%
+        - HOT: ATR% >= 0.18%, TP% = 22-28%
+        
+        ADX modula adicionalmente:
+        - ADX > 30: Tendência forte, +3% no TP
+        - ADX < 20: Tendência fraca, -2% no TP
+        """
+        base_tp_pct = {
+            "COLD": 0.14,      # 14% base
+            "LATERAL": 0.16,   # 16% base
+            "NORMAL": 0.20,    # 20% base (padrão anterior)
+            "HOT": 0.25,       # 25% base (mais agressivo)
+        }
+        
+        tp_pct = base_tp_pct.get(regime, 0.20)
+        
+        # 1. Ajusta baseado em volatilidade adicional (ATR%)
+        # Se ATR% > 0.20, aumenta um pouco o TP (mercado é volátil, consegue mover mais)
+        volatility_bonus = 0.0
+        if atr_pct > 0.0020:  # > 0.20%
+            volatility_bonus = (atr_pct - 0.0020) * 2.5  # Até +0.05 extra
+        
+        tp_pct += volatility_bonus
+        
+        # 2. Ajusta baseado na força da tendência (ADX)
+        if adx > 30:
+            tp_pct += 0.03  # +3% em tendências muito fortes
+        elif adx < 20:
+            tp_pct -= 0.02  # -2% em tendências fracas
+        
+        # 3. Assegura limites razoáveis
+        tp_pct = max(0.10, min(0.40, tp_pct))  # Min 10%, Max 40%
+        
+        # 4. Calcula o preço de TP
+        if side.upper() == "BUY":
+            tp_price = price * (1.0 + tp_pct)
+        else:  # SELL
+            tp_price = price * (1.0 - tp_pct)
+        
+        return tp_price
