@@ -184,22 +184,6 @@ class TradingStrategy:
         dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1)
         return dx.rolling(period).mean().bfill()
 
-    def _check_volume_divergence(self, df):
-        """
-        Verifica se volume está AUMENTANDO com a ação de preço.
-        Volume divergence OK = volume não está caindo significativamente
-        Retorna True se volume_atual >= 80% da média dos últimos 5 candles
-        (Evita entradas em candles fracos com volume baixo)
-        """
-        if len(df) < 5:
-            return True
-        
-        curr_vol = df['volume'].iloc[-1]
-        avg_vol_5 = df['volume'].iloc[-6:-1].mean()
-        
-        # Volume divergence validado se não está caindo
-        return curr_vol >= (avg_vol_5 * 0.80)
-
     # =========================================================
     # LÓGICA DE SINAL
     # =========================================================
@@ -234,14 +218,13 @@ class TradingStrategy:
             pico_vol = curr_vol > (avg_vol * self.volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= self.min_adx
-            volume_divergence_ok = self._check_volume_divergence(self.data_1m)  # NEW: filtro de divergência
             
             # [SIGNAL-FIRST MODE] Para regimes frios: relaxa volume se há sinal técnico
             if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
                 # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
 
-            if tendencia_forte and volat_ok and pico_vol and volume_divergence_ok:  # NEW: adiciona validacao volume_divergence
+            if tendencia_forte and volat_ok and pico_vol:
                 # M15 Context
                 m15_last = self.data_15m.iloc[-1]
                 m15_is_green = m15_last['close'] > m15_last['open']
@@ -287,8 +270,6 @@ class TradingStrategy:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
                 if not pico_vol:
                     motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier} da media({avg_vol:.2f})")
-                if not volume_divergence_ok:  # NEW: adiciona motivo de divergência
-                    motivos.append(f"vol_divergence: {curr_vol:.2f} caindo contra media_5={self.data_1m['volume'].iloc[-6:-1].mean():.2f}")
                 if len(motivos) == 0:
                     motivos.append("sem rompimento m1/m15 ou RSI de exaustao")
                 self.last_hold_reason = " | ".join(motivos)
