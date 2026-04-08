@@ -26,8 +26,8 @@ class TradingStrategy:
         self.min_adx = 25
         self.atr_multiplier_sl = 1.5        # ATR multiplier para SL
         self.atr_multiplier_tp = 4.0        # ATR multiplier para TP (default, será overridden por regime)
-        self.rsi_overbought = 70            # Filtro de exaustão (ADJUSTED: 75 → 70 for stricter filtering)
-        self.rsi_oversold = 30              # Filtro de exaustão (ADJUSTED: 25 → 30 for stricter filtering)
+        self.rsi_overbought = 75            # Filtro de exaustão
+        self.rsi_oversold = 25              # Filtro de exaustão
         
         self.min_pnl_be = 0.007             # 0.7% para mover Stop
         self.distancia_respiro = 0.015      # 1.5% de Trailing
