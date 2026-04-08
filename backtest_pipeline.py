@@ -4,6 +4,10 @@ import os
 import sys
 import pandas as pd
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load .env for consistent SYMBOLS
+load_dotenv()
 
 data_dir = os.path.join(os.path.dirname(__file__), 'data')
 src_dir = os.path.join(os.path.dirname(__file__), 'src')
@@ -13,15 +17,8 @@ sys.path.insert(0, src_dir)
 from data.DeepSim_Engine import DeepSimulator
 
 BASE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'coins')
-SYMBOLS = [
-    "BTCUSDT"  # ,"ETHUSDT"  # DISABLED: Weak performer (-10.51% PnL, 23.8% WR)
-    # ,"SOLUSDT"  # DISABLED: Poor performer (-16.22% PnL, 21.1% WR)
-    # ,"AVAXUSDT"  # DISABLED: Weak performer (-12.83% PnL, 22.8% WR)
-    ,"XRPUSDT"
-    # ,"ADAUSDT"  # DISABLED: Worst performer (-22.57% PnL, 17.4% WR)
-    ,"NEARUSDT"  # ,"DOTUSDT"  # DISABLED: Poor performer (-7.52% PnL, 23.3% WR)
-    ,"LINKUSDT", "SUIUSDT", "OPUSDT"
-]
+# Use SYMBOLS from .env for consistency with main.py
+SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT").split(",")
 
 DEFAULT_CONFIG = {
     "atr_mult": 2.0,
