@@ -14,11 +14,13 @@ from data.DeepSim_Engine import DeepSimulator
 
 BASE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'coins')
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT"  # ,"SOLUSDT"  # DISABLED: Poor performer (-16.22% PnL, 21.1% WR)
+    "BTCUSDT"  # ,"ETHUSDT"  # DISABLED: Weak performer (-10.51% PnL, 23.8% WR)
+    # ,"SOLUSDT"  # DISABLED: Poor performer (-16.22% PnL, 21.1% WR)
     # ,"AVAXUSDT"  # DISABLED: Weak performer (-12.83% PnL, 22.8% WR)
     ,"XRPUSDT"
     # ,"ADAUSDT"  # DISABLED: Worst performer (-22.57% PnL, 17.4% WR)
-    ,"NEARUSDT", "DOTUSDT", "LINKUSDT", "SUIUSDT", "OPUSDT"
+    ,"NEARUSDT"  # ,"DOTUSDT"  # DISABLED: Poor performer (-7.52% PnL, 23.3% WR)
+    ,"LINKUSDT", "SUIUSDT", "OPUSDT"
 ]
 
 DEFAULT_CONFIG = {
