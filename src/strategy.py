@@ -24,6 +24,8 @@ class TradingStrategy:
         self.ema_15m_period = 200
         self.min_15m_candles = 200
         self.min_adx = 25
+        self.atr_multiplier_sl = 1.5        # ATR multiplier para SL
+        self.atr_multiplier_tp = 4.0        # ATR multiplier para TP (default, será overridden por regime)
         self.rsi_overbought = 75            # Filtro de exaustão
         self.rsi_oversold = 25              # Filtro de exaustão
         
@@ -41,16 +43,18 @@ class TradingStrategy:
         self.regime_params_cold = {
             "min_volatilidade_pct": 0.0005,  # 0.05% - RELAXED: volatilidade opcional
             "volume_multiplier": 1.0,        # sem requisito volume (entra com sinal)
-            "min_adx": 18,                   # REDUCED 20→18: slight relaxation for cold markets
+            "min_adx": 20,                   # Tendência REAL (não lateral)
             "atr_multiplier_sl": 1.5,        # SL mais apertado
+            "atr_multiplier_tp": 2.5,        # TP próximo (2.5x ATR)
             "leverage": 5.0,                 # alavancagem reduzida
             "require_volume_peak": False,    # ✅ Permite entrada mesmo com volume baixo
         }
         self.regime_params_lateral = {
             "min_volatilidade_pct": 0.0008,  # 0.08% - RELAXED: volatilidade low-bar
             "volume_multiplier": 1.2,        # 120% - requisito relaxado
-            "min_adx": 16,                   # REDUCED 18→16: slight relaxation for lateral markets
+            "min_adx": 18,                   # Requer tendência mais forte
             "atr_multiplier_sl": 1.3,
+            "atr_multiplier_tp": 3.0,        # TP moderado (3.0x ATR)
             "leverage": 3.0,                 # alavancagem baixa
             "require_volume_peak": False,    # ✅ Permite entrada por rompimento
         }
@@ -59,6 +63,7 @@ class TradingStrategy:
             "volume_multiplier": 1.4,        # um pouco menos rígido (era 1.6)
             "min_adx": 22,                   # um pouco menos rígido (era 25)
             "atr_multiplier_sl": 1.8,
+            "atr_multiplier_tp": 5.0,        # TP distante (5.0x ATR) para capturar movimento normal
             "leverage": 10.0,
             "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
         }
@@ -67,6 +72,7 @@ class TradingStrategy:
             "volume_multiplier": 2.0,        # Relaxado: x2.0 em vez de 2.2
             "min_adx": 18,                   # Relaxado: 18 em vez de 28 (volatilidade já é suficiente)
             "atr_multiplier_sl": 2.0,
+            "atr_multiplier_tp": 6.0,        # TP muito distante (6.0x ATR) para vol alta
             "leverage": 15.0,
             "require_volume_peak": True,     # Mantém volume requirement
         }
@@ -127,6 +133,8 @@ class TradingStrategy:
         self.min_volatilidade_pct = params["min_volatilidade_pct"]
         self.volume_multiplier = params["volume_multiplier"]
         self.min_adx = params["min_adx"]
+        self.atr_multiplier_sl = params.get("atr_multiplier_sl", 1.8)
+        self.atr_multiplier_tp = params.get("atr_multiplier_tp", 4.0)  # NEW: regime-specific TP target
         self.require_volume_peak = params.get("require_volume_peak", True)  # Novo: controla se volume é obrigatório
 
     def calculate_indicators(self, df_1m, df_15m):
