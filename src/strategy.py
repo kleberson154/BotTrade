@@ -184,31 +184,6 @@ class TradingStrategy:
         dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1)
         return dx.rolling(period).mean().bfill()
 
-    def _check_clean_breakout(self, df, breakout_type):
-        """
-        Validates that a breakout is 'clean' (not a fake-out/rebound).
-        - BUY: Verifies current high is above previous candle's high (sustained momentum)
-        - SELL: Verifies current low is below previous candle's low (sustained downward pressure)
-        
-        Returns True only if breakout shows clean directional confirmation.
-        """
-        if len(df) < 2:
-            return True
-        
-        curr_high = df['high'].iloc[-1]
-        curr_low = df['low'].iloc[-1]
-        prev_high = df['high'].iloc[-2]
-        prev_low = df['low'].iloc[-2]
-        
-        if breakout_type == "BUY":
-            # BUY breakout is clean if current high continues above previous high
-            return curr_high > prev_high
-        elif breakout_type == "SELL":
-            # SELL breakout is clean if current low continues below previous low
-            return curr_low < prev_low
-        
-        return True
-
     # =========================================================
     # LÓGICA DE SINAL
     # =========================================================
@@ -258,20 +233,16 @@ class TradingStrategy:
                 # Respiro/Máximas
                 max_15m = self.data_1m['high'].iloc[-16:-1].max()
                 min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                
-                # NEW: Check for clean breakouts (avoid fake-outs)
-                clean_buy_breakout = self._check_clean_breakout(self.data_1m, "BUY")
-                clean_sell_breakout = self._check_clean_breakout(self.data_1m, "SELL")
 
                 # Condição de COMPRA
-                if curr_price > max_15m and curr_price > ind['ema_200_15'] and m15_is_green and clean_buy_breakout:  # NEW: clean_buy_breakout
+                if curr_price > max_15m and curr_price > ind['ema_200_15'] and m15_is_green:
                     if ind['rsi_1m'] < self.rsi_overbought: # Filtro de exaustão
                         raw_signal = "BUY"
                         min_rec = self.data_1m['low'].tail(10).min()
                         dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
 
                 # Condição de VENDA
-                elif curr_price < min_15m and curr_price < ind['ema_200_15'] and m15_is_red and clean_sell_breakout:  # NEW: clean_sell_breakout
+                elif curr_price < min_15m and curr_price < ind['ema_200_15'] and m15_is_red:
                     if ind['rsi_1m'] > self.rsi_oversold: # Filtro de exaustão
                         raw_signal = "SELL"
                         max_rec = self.data_1m['high'].tail(10).max()
@@ -299,16 +270,6 @@ class TradingStrategy:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
                 if not pico_vol:
                     motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier} da media({avg_vol:.2f})")
-                # NEW: track clean breakout rejections
-                if tendencia_forte and volat_ok and pico_vol:
-                    max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                    min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                    clean_buy = self._check_clean_breakout(self.data_1m, "BUY")
-                    clean_sell = self._check_clean_breakout(self.data_1m, "SELL")
-                    if curr_price > max_15m and not clean_buy:
-                        motivos.append("fake_breakout_buy: high nao mantém tendência")
-                    if curr_price < min_15m and not clean_sell:
-                        motivos.append("fake_breakout_sell: low nao mantém tendência")
                 if len(motivos) == 0:
                     motivos.append("sem rompimento m1/m15 ou RSI de exaustao")
                 self.last_hold_reason = " | ".join(motivos)
