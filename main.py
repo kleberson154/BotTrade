@@ -319,9 +319,12 @@ def sync_historical_pnl(start_date="2026-03-18"):
     try:
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
         processed_orders = set()
+        log.info(f"🔄 Sincronizando histórico PnL desde {start_date} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
+        
         for symbol in SYMBOLS:
             resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
             if resp['retCode'] == 0:
+                trades_count = 0
                 for t in reversed(resp['result']['list']):
                     order_id = t['orderId']
                     if order_id not in processed_orders:
@@ -336,6 +339,11 @@ def sync_historical_pnl(start_date="2026-03-18"):
                         risk_mgr.total_pnl_bruto += pnl_bruto
                         risk_mgr.total_fees += fees
                         processed_orders.add(order_id)
+                        trades_count += 1
+                log.info(f"  ✅ {symbol}: {trades_count} trades sincronizados")
+        
+        if risk_mgr.stats['total_trades'] > 0:
+            log.info(f"📊 Total após sincronização: {risk_mgr.stats['total_trades']} trades, WR: {(risk_mgr.stats['wins']/risk_mgr.stats['total_trades']*100):.1f}%")
     except Exception as e: log.error(f"Erro sync pnl: {e}")
 
 def prepare_leverage(symbol, leverage_value):
