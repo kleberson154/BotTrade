@@ -345,11 +345,19 @@ def check_closed_trades():
                 ULTIMO_ORDER_ID_PROCESSADO = order_id
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
-def sync_historical_pnl(start_date="2026-03-18"):
+def sync_historical_pnl(risk_mgr):
+    """Sincroniza histórico de PnL desde o reset_timestamp ou 18/03 como fallback."""
     try:
-        start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
+        # Determina a data de início (reset_timestamp ou 18/03)
+        if risk_mgr.reset_timestamp:
+            start_ts = int(risk_mgr.reset_timestamp.timestamp() * 1000)
+            start_date_display = risk_mgr.reset_timestamp.strftime("%Y-%m-%d")
+        else:
+            start_date_display = "2026-03-18"
+            start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d").timestamp() * 1000)
+        
         processed_orders = set()
-        log.info(f"🔄 Sincronizando histórico PnL desde {start_date} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
+        log.info(f"🔄 Sincronizando histórico PnL desde {start_date_display} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
         
         for symbol in SYMBOLS:
             resp = session.get_closed_pnl(category="linear", symbol=symbol, startTime=start_ts, limit=100)
@@ -513,6 +521,6 @@ if __name__ == "__main__":
     sync_open_positions()
     Thread(target=process_queue, daemon=True).start()
     ws = create_and_subscribe_websocket()
-    sync_historical_pnl("2026-03-18")
+    sync_historical_pnl(risk_mgr)
     debug_sanity_check()
     start_bot()
