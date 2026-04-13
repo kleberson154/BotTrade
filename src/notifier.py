@@ -19,6 +19,9 @@ class TelegramNotifier:
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.enabled = all([self.token, self.chat_id])
+        
+        # 🆕 Integração Mack
+        self.mack = MackNotifier()
 
     def send_message(self, text):
         if not self.enabled:
@@ -50,7 +53,7 @@ class TelegramNotifier:
     
         msg = (
             f"📊 *DASHBOARD DE PERFORMANCE*\n"
-            f"📅 Período: Desde 18/03\n"
+            f"📅 Período: Desde {risk_mgr.reset_date_str}\n"
             f"---\n"
             f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
             f"📈 *Win Rate:* `{wr:.1f}%` 🎯\n"
@@ -69,14 +72,7 @@ class TelegramNotifier:
     # =========================================================
     # 🆕 MACK NOTIFIER - Notificações Profissionais
     # =========================================================
-    
-    def __init__(self):
-        self.token = os.getenv("TELEGRAM_TOKEN")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        self.enabled = all([self.token, self.chat_id])
-        
-        # 🆕 Integração Mack
-        self.mack = MackNotifier()
+    # (Integração Mack será inicializada no __init__ acima)
     
     def notify_signal_mack(self, symbol, side, entry, sl, tp, leverage, profile, strength, rationale, partials):
         """
