@@ -4,6 +4,10 @@ import datetime
 import logging
 from collections import deque as python_deque
 
+from src.signal_formatter import TradeSignalBuilder, SignalProfile
+from src.mack_compliance import MackCompliance, PositionSizer
+from src.multi_tp_manager import SMCTPManager
+
 log = logging.getLogger(__name__)
 
 class TradingStrategy:
@@ -79,6 +83,17 @@ class TradingStrategy:
         self.be_activated = False 
         self.partial_taken = False 
         self.last_hold_reason = "init"
+        
+        # =========================================================
+        # INTEGRAÇÃO MACK - TradeSignalBuilder + Compliance
+        # =========================================================
+        # TradeSignalBuilder será criado dinamicamente em check_signal()
+        # quando houver um sinal válido
+        self.compliance = MackCompliance()
+        self.position_sizer = PositionSizer()
+        self.last_trade_signal = None
+        self.account_balance = 1000.0
+        self.tp_manager = None
 
     # =========================================================
     # UTILITÁRIOS DE CÁLCULO (OTIMIZADOS)
@@ -316,6 +331,54 @@ class TradingStrategy:
                     f"entrada={final_signal} adx={ind['adx_1m']:.1f} "
                     f"atr%={ind['atr_pct']:.4f} vol={curr_vol:.2f}/avg20={avg_vol:.2f}"
                 )
+
+            # =========================================================
+            # 🆕 INTEGRAÇÃO MACK: Validação RR 1:2 Antes de Retornar
+            # =========================================================
+            if final_signal in ["BUY", "SELL"]:
+                # Calcular TP com base na distância SL (RR 1:2 mínimo)
+                tp_distance = dist_sl * 2  # TP é 2x a distância do SL
+                
+                if final_signal == "BUY":
+                    tp_price = curr_price + tp_distance
+                    sl_price = curr_price - dist_sl
+                else:  # SELL
+                    tp_price = curr_price - tp_distance
+                    sl_price = curr_price + dist_sl
+                
+                # Validar regra 1: Risk:Reward 1:2 mínimo
+                validate_result = self.compliance.validate_rr_ratio(
+                    entry=curr_price,
+                    sl=sl_price,
+                    tp=tp_price,
+                    side="LONG" if final_signal == "BUY" else "SHORT",
+                    symbol=self.symbol
+                )
+                
+                if not validate_result['valid']:
+                    # RR violada, rejeitar sinal
+                    log.warning(
+                        f"🚫 [{self.symbol}] Sinal {final_signal} REJEITADO: "
+                        f"RR {validate_result['ratio']}:1 < 1:2 (Mack Rule #1)"
+                    )
+                    final_signal = "HOLD"
+                    self.last_hold_reason = f"RR violada: {validate_result['ratio']}:1 < 1:2"
+                else:
+                    # RR aprovada, criar TradeSignal
+                    try:
+                        signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
+                            .with_stops(sl_price, tp_price)
+                            .with_leverage(10)
+                            .with_profile(SignalProfile.BALANCED)
+                            .build())
+                        
+                        self.last_trade_signal = signal
+                        log.info(
+                            f"✅ [{self.symbol}] TradeSignal criado: {final_signal} @ {curr_price:.8f} "
+                            f"| RR: {validate_result['ratio']}:1 | SL: {sl_price:.8f} | TP: {tp_price:.8f}"
+                        )
+                    except Exception as e:
+                        log.error(f"❌ Erro ao criar TradeSignal ({self.symbol}): {e}")
 
             return final_signal, dist_sl
 

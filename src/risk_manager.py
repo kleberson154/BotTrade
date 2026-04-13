@@ -1,5 +1,10 @@
 import datetime
 import pandas as pd
+import logging
+
+from src.mack_compliance import MackCompliance, PositionSizer
+
+log = logging.getLogger(__name__)
 
 class RiskManager:
     # =========================================================
@@ -13,6 +18,11 @@ class RiskManager:
         self.total_fees = 0.0
         self.trades_history = []
         self.performance = {}  # Rastreamento de performance por moeda
+        
+        # 🆕 INTEGRAÇÃO MACK: 5 Regras de Trading Disciplinado
+        self.compliance = MackCompliance(account_balance=1000.0)
+        self.position_sizer = PositionSizer()
+        self.account_balance = 1000.0
         
         self.stats = {
             'wins': 0,
@@ -238,6 +248,117 @@ class RiskManager:
             tp = price - (distancia_sl * 2.5)
             
         return sl, tp
+    
+    # =========================================================
+    # 🆕 5. MACK COMPLIANCE - 5 REGRAS DE TRADING DISCIPLINADO
+    # =========================================================
+    
+    def validate_trade_mack(self, entry, sl, tp, symbol, side="LONG"):
+        """
+        🚨 REGRA 1 DO MACK: Risco:Retorno 1:2 MÍNIMO
+        
+        Rejeita qualquer trade que não tenha pelo menos 1:2
+        Por quê? Precisaria de 80% de acerto para ganhar dinheiro com RR<1:2
+        """
+        result = self.compliance.validate_rr_ratio(entry, sl, tp, side, symbol)
+        
+        if not result['valid']:
+            log.error(f"❌ {symbol} REJEITADO: RR {result['ratio']}:1 < 1:2 (Mack Rule #1)")
+            return {"valid": False, "reason": result, "ratio": result['ratio']}
+        
+        log.info(f"✅ {symbol} {side} | RR: {result['ratio']}:1 APROVADO (Mack Rule #1)")
+        return {"valid": True, "ratio": result['ratio']}
+    
+    def calculate_position_size_mack(self, entry, sl, account_balance=None, side="LONG", risk_percent=0.02):
+        """
+        🚨 REGRA 4 DO MACK: Dimensionamento Confortável
+        
+        Fórmula Mack: Qty = (Account × Risk%) / |Entry - SL|
+        Risco máximo: 2% por trade (padrão profissional)
+        
+        Resultado: Você dorme tranquilo com a posição!
+        """
+        if account_balance is None:
+            account_balance = self.account_balance
+        
+        qty = self.position_sizer.calculate_qty(
+            account_balance=account_balance,
+            entry_price=entry,
+            sl_price=sl,
+            risk_percent=risk_percent,
+            side=side
+        )
+        
+        # Validar se posição está confortável
+        sizing_result = self.compliance.validate_position_sizing(
+            symbol="",
+            entry=entry,
+            sl=sl,
+            quantity=qty,
+            leverage=int(self.fixed_leverage),
+            account_balance=account_balance,
+            side=side
+        )
+        
+        if not sizing_result['valid']:
+            log.warning(f"⚠️ {sizing_result['comfort_status']}")
+        
+        return qty
+    
+    def check_sl_violation(self, symbol, old_sl, new_sl, side, current_pnl):
+        """
+        🚨 REGRA 2 DO MACK: SL Imóvel em Prejuízo
+        
+        Detecta violações: SL nunca deve se mover CONTRA trader quando em perda
+        Se isso acontecer, é erro emocional grave!
+        """
+        result = self.compliance.validate_sl_immobility(
+            symbol=symbol,
+            current_price=0,  # Não usado aqui
+            sl_original=old_sl,
+            sl_current=new_sl,
+            side=side,
+            current_pnl=current_pnl
+        )
+        
+        if not result['valid']:
+            log.error(f"🚨 REGRA 2 VIOLADA ({symbol}): SL mexido de {old_sl} para {new_sl} em {current_pnl:.2f}% PnL")
+            self.compliance.log_violation(
+                rule_number=2,
+                symbol=symbol,
+                message=f"SL movido contra trader em {current_pnl:.2f}% perda"
+            )
+            return False
+        
+        return True
+    
+    def check_averaging_down(self, symbol, recent_additions, total_pnl, is_losing):
+        """
+        🚨 REGRA 3 DO MACK: Sem Averaging Down
+        
+        Averaging down (pirâmide invertida) é o caminho mais rápido para ruína!
+        Detecta se está adicionando capital enquanto perde.
+        """
+        result = self.compliance.validate_no_averaging_down(
+            symbol=symbol,
+            recent_additions=recent_additions,
+            total_pnl=total_pnl,
+            is_losing=is_losing
+        )
+        
+        if result['averaging_down']:
+            log.error(f"🚨 REGRA 3 VIOLADA ({symbol}): Averaging Down detectado! {recent_additions} adições em {total_pnl:.2f}% perda")
+        
+        return result['valid']
+    
+    def get_compliance_report(self):
+        """Retorna auditoria completa das 5 regras do Mack"""
+        return self.compliance.get_compliance_report()
+    
+    def update_compliance(self, account_balance):
+        """Atualiza saldo de compliance (chamar após trade fechado)"""
+        self.account_balance = account_balance
+        self.compliance.account_balance = account_balance
 
     def calculate_dynamic_tp(self, price, side, atr_pct, adx, regime="NORMAL"):
         """
