@@ -67,11 +67,11 @@ class TradingStrategy:
             "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
         }
         self.regime_params_hot = {
-            "min_volatilidade_pct": 0.0018,  # Relaxado: agora é base para HOT
-            "volume_multiplier": 2.0,        # Relaxado: x2.0 em vez de 2.2
-            "min_adx": 25,                   # AUMENTADO para 25: requer tendência clara
-            "atr_multiplier_sl": 2.0,
-            "leverage": 15.0,
+            "min_volatilidade_pct": 0.0030,  # Base para HOT: ATR >= 0.3%
+            "volume_multiplier": 2.0,        # x2.0 em volatilidade extrema
+            "min_adx": 25,                   # Requer tendência clara (sem pump de volatilidade pura)
+            "atr_multiplier_sl": 2.2,        # SL mais largo em volatilidade extrema
+            "leverage": 12.0,                # Reduzido de 15 para 12 (segurança com 120 USDT banca)
             "require_volume_peak": True,     # Mantém volume requirement
         }
         
@@ -124,16 +124,19 @@ class TradingStrategy:
         atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
         adx = self._calc_adx_single(df_1m).iloc[-1]
         
-        # COLD: ATR muito baixo
-        if atr_pct < 0.0010 and adx < 20:
+        # 🔥 HOT: ATR MUITO alto (volatilidade extrema >0.008 = 0.8%)
+        if atr_pct >= 0.0080:
+            return "HOT"
+        # 🔥 HOT: ATR alto (0.003 a 0.008 = 0.3% a 0.8%)
+        elif atr_pct >= 0.0030:
+            return "HOT"
+        # 🧊 COLD: ATR muito baixo
+        elif atr_pct < 0.0010 and adx < 20:
             return "COLD"
-        # LATERAL: ADX muito baixo (sem tendência)
+        # 〰️ LATERAL: ADX muito baixo (sem tendência)
         elif adx < 15 and atr_pct < 0.0018:
             return "LATERAL"
-        # HOT: ATR muito alto (volatilidade reconhecida) - sem requisito ADX
-        elif atr_pct >= 0.0018:
-            return "HOT"
-        # NORMAL: tudo dentro da normalidade
+        # ✅ NORMAL: tudo dentro da normalidade
         else:
             return "NORMAL"
     
