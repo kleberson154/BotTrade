@@ -31,7 +31,7 @@ API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 _mode = os.getenv("BYBIT_MODE", "demo").lower()
 IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
-SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT").split(",")
+SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT,IRYUSDT,HYPEUSDT,AVAXUSDT,SOLUSDT,ADAUSDT,DOTUSDT,LYNUSDT,TAVEUSDT").split(",")
 ULTIMO_CHECK_VIVO = 0 
 SALDO_INICIAL_DIA = None
 ULTIMO_ORDER_ID_PROCESSADO = None
@@ -43,7 +43,7 @@ REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
 # --- MARKET CYCLES ANALYZER (NEW) ---
 market_cycles = MarketCycleAnalyzer()
 
-# --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) ---
+# --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) + 8 NOVAS MOEDAS ---
 COIN_CONFIGS = {
     "BTCUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
     "XRPUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
@@ -51,6 +51,14 @@ COIN_CONFIGS = {
     "LINKUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 30, "invert_signal": True, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
     "SUIUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
     "OPUSDT":   {"atr_multiplier_sl": 2.0, "min_pnl_be": 0.005, "distancia_respiro": 0.018, "min_adx": 32, "invert_signal": False, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
+    "IRYUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "HYPEUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "AVAXUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "SOLUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "ADAUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "DOTUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "LYNUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
+    "TAVEUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
 }
 
 # --- BEST PERFORMERS ONLY (6 coins: 30.87% WR, +20.27% PnL) ---
