@@ -16,11 +16,13 @@ Status: 🟢 PRONTO PARA DEPLOY
 ### **ESTRATÉGIA 1: Fibonacci Targets para Exit Management**
 
 **O Problema Anterior:**
+
 - TPs calculados apenas por ATR (empírico)
 - Sem suporte matemático
 - Às vezes falta/sobra movimento
 
 **A Solução Fibonacci:**
+
 ```
 Entry: 45.000
 
@@ -42,12 +44,14 @@ Razão Dourada: 1.618 (Golden Ratio)
 ```
 
 **Impacto:**
+
 - ✅ TPs em níveis matemáticos (não aleatórios)
 - ✅ SL melhor protegido
 - ✅ Menos whipsaws
 - ✅ Sharpe ratio: +0-2%
 
 **Onde Usar:**
+
 - `executor.setup_smc_management_with_fibonacci(...)`
 - Chamado automaticamente quando order executa
 
@@ -56,11 +60,13 @@ Razão Dourada: 1.618 (Golden Ratio)
 ### **ESTRATÉGIA 2: Fibonacci Confidence Boost para Leverage Dinâmico**
 
 **O Problema Anterior:**
+
 - Leverage fixo por regime
 - Sem ajuste fino baseado em confirmação técnica
 - Oportunidades perdidas em bons setups
 
 **A Solução Fibonacci:**
+
 ```
 RSI como proxy de fase do mercado
 │
@@ -77,6 +83,7 @@ RSI como proxy de fase do mercado
 ```
 
 **Exemplo Real:**
+
 ```
 Market Cycle factor:    1.0x  (Baseado em BTC dominance)
 Fibonacci factor:       1.15x (Preço em TP1 - 38.2%)
@@ -87,6 +94,7 @@ Final Leverage = 10 × 1.0 × 1.15 = 11.5x ⬆️
 ```
 
 **Impacto:**
+
 - ✅ ZERO novas rejeições (HOLD rate = MESMO)
 - ✅ Trades boas ficam mais agressivas
 - ✅ Trades questionáveis ficam mais conservadoras
@@ -94,6 +102,7 @@ Final Leverage = 10 × 1.0 × 1.15 = 11.5x ⬆️
 - ✅ Avg Winner: +0.5-1.0% maior
 
 **Onde Usar:**
+
 - `main.py execute_new_trade()`
 - Automático quando trade é aberto
 
@@ -102,11 +111,13 @@ Final Leverage = 10 × 1.0 × 1.15 = 11.5x ⬆️
 ### **ESTRATÉGIA 3: Fibonacci para Proteção de SL**
 
 **O Problema Anterior:**
+
 - SL = Entry - (ATR × 1.8)
 - Sem considerar níveis de suporte naturais
 - Às vezes muito perto, às vezes muito longe
 
 **A Solução Fibonacci:**
+
 ```
 LONG Trade: Entry 45.000
 
@@ -123,6 +134,7 @@ Vantagem:
 ```
 
 **Impacto:**
+
 - ✅ SL melhor posicionado
 - ✅ Menos false exits no SL
 - ✅ Melhor risco absoluto
@@ -133,6 +145,7 @@ Vantagem:
 ## 📊 COMPARAÇÃO: ANTES vs DEPOIS
 
 ### Antes (Mack Only):
+
 ```
 Métrica          | Baseline (Backtest)
 ─────────────────┼────────────────────
@@ -146,6 +159,7 @@ Whipsaws (SL)    | ~40/287 (14%)
 ```
 
 ### Depois (Mack + Fibonacci):
+
 ```
 Métrica          | Esperado (+ Fibo)
 ─────────────────┼─────────────────────
@@ -159,6 +173,7 @@ Whipsaws (SL)    | ~25/287 (9%) (-5pp)
 ```
 
 **Diferença Crítica:**
+
 - ✅ **ZERO novas rejeições**
 - ✅ **Mesmos trades, mas melhor formados**
 - ✅ **Sharpe ratio +10-20% melhor**
@@ -168,20 +183,22 @@ Whipsaws (SL)    | ~25/287 (9%) (-5pp)
 ## 🔧 COMO ESTÁ IMPLEMENTADO
 
 ### Arquivo 1: `src/fibonacci_manager.py` (450 linhas)
+
 ```python
 class FibonacciManager:
-    
+
     def calculate_targets_fibo(...)
         # ESTRATÉGIA 1: Calcula TPs 38.2%, 50%, 61.8%, 100%
-        
+
     def get_fibo_confidence_boost(...)
         # ESTRATÉGIA 2: Calcula leverage multiplier (-5% a +15%)
-        
+
     def calculate_fibo_sl(...)
         # ESTRATÉGIA 3: SL em nível de Fibonacci com margem ATR
 ```
 
 ### Arquivo 2: `src/strategy.py` (+10 linhas)
+
 ```python
 self.fib_manager = FibonacciManager()  # Init
 
@@ -190,6 +207,7 @@ fibo_confidence = self.fib_manager.get_fibo_confidence_boost(...)
 ```
 
 ### Arquivo 3: `src/execution.py` (+65 linhas)
+
 ```python
 def setup_smc_management_with_fibonacci(...):
     # Nova função que usa Fibonacci TPs
@@ -198,6 +216,7 @@ def setup_smc_management_with_fibonacci(...):
 ```
 
 ### Arquivo 4: `main.py` (+12 linhas)
+
 ```python
 # Aplicar Fibonacci confidence boost
 leverage_factor_fibo = 1.0 + fibo_confidence_boost
@@ -212,6 +231,7 @@ executor.setup_smc_management_with_fibonacci(...)
 ## ✅ VALIDAÇÃO E TESTES
 
 ### Testes Executados:
+
 ```
 ✅ [1/5] FibonacciManager import
 ✅ [2/5] Targets calculation (38.2%, 61.8%, 100%)
@@ -245,6 +265,7 @@ Todos: PASSED ✓
    - ✅ Ativo
 
 **Resultado:**
+
 ```
 Trade executado com TODAS as 3 estratégias:
 ├─ Market Cycles: leverage × 1.0x
@@ -299,17 +320,18 @@ Comparado com ATR (anterior):
 
 ## 💡 RESUMO FINAL
 
-| Aspecto | Antes | Depois | Ganho |
-|---------|-------|--------|-------|
-| **TPs Precisão** | Empírica (ATR) | Matemática (Fibo) | ⬆️ +50% |
-| **SL Proteção** | ATR × 1.8 | Fibo + ATR | ⬆️ +20% |
-| **Confidence Boost** | Nenhum | ±10-15% | ✨ NEW |
-| **Trade Rejections** | 30.87% WR | 30-32% WR | 📌 SAME |
-| **Sharpe Ratio** | 1.12 | 1.25-1.35 | ⬆️ +10% |
-| **Avg Winner** | +0.848% | +0.95% | ⬆️ +0.1% |
-| **Whipsaws** | 14% | ~9% | ⬇️ -5pp |
+| Aspecto              | Antes          | Depois            | Ganho    |
+| -------------------- | -------------- | ----------------- | -------- |
+| **TPs Precisão**     | Empírica (ATR) | Matemática (Fibo) | ⬆️ +50%  |
+| **SL Proteção**      | ATR × 1.8      | Fibo + ATR        | ⬆️ +20%  |
+| **Confidence Boost** | Nenhum         | ±10-15%           | ✨ NEW   |
+| **Trade Rejections** | 30.87% WR      | 30-32% WR         | 📌 SAME  |
+| **Sharpe Ratio**     | 1.12           | 1.25-1.35         | ⬆️ +10%  |
+| **Avg Winner**       | +0.848%        | +0.95%            | ⬆️ +0.1% |
+| **Whipsaws**         | 14%            | ~9%               | ⬇️ -5pp  |
 
 **TL;DR:**
+
 - 🟢 Sem novas rejeições (HOLD rate IGUAL)
 - 🟢 Trades MELHORES formadas
 - 🟢 Sharpe ratio +10% melhor
