@@ -442,7 +442,18 @@ def check_market_heat():
         if not strat: continue
         df = strat.data_1m
         if df is not None and len(df) >= 30:
-            threshold = getattr(strat, "min_volatilidade_pct", 0.0012)
+            # 🔄 RECALCULA o regime em tempo real dentro do termômetro
+            regime = strat.detect_market_regime(df)
+            
+            # Obtém threshold baseado no regime recalculado
+            regime_params = {
+                "COLD": strat.regime_params_cold,
+                "LATERAL": strat.regime_params_lateral,
+                "NORMAL": strat.regime_params_normal,
+                "HOT": strat.regime_params_hot,
+            }.get(regime, strat.regime_params_normal)
+            threshold = regime_params.get("min_volatilidade_pct", 0.0012)
+            
             recent = df.tail(30)
             tr = pd.concat([
                 recent['high'] - recent['low'],
@@ -453,7 +464,6 @@ def check_market_heat():
             if pd.isna(atr_pct):
                 continue
             pct = (atr_pct / threshold) * 100 if threshold > 0 else 0
-            regime = strat.current_regime
             
             if regime == "COLD":
                 num_cold += 1
