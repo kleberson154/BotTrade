@@ -237,9 +237,24 @@ class TradingStrategy:
             raw_signal = "HOLD"
             dist_sl = 0
             
-            pico_vol = curr_vol > (avg_vol * self.volume_multiplier)
+            # ⚡ Ajustes Dinâmicos por Ciclos de Mercado (RSI como proxy)
+            rsi = ind['rsi_1m']
+            cycle_mult_adx = 1.0
+            cycle_mult_vol = 1.0
+            
+            if rsi > 65:  # Fase quente/overbought - menos volume, mais rigor técnico
+                cycle_mult_adx = 1.15    # Exigir ADX mais alto (reduz false signals em picos)
+                cycle_mult_vol = 0.9     # Menos exigente com volume (momentum está claro)
+            elif rsi < 35:  # Fase fria/oversold - mais volume, menos rigor técnico
+                cycle_mult_adx = 0.85    # Mais relaxo com ADX (aproveitando reversão)
+                cycle_mult_vol = 1.1     # Mais exigente com volume (validação mais forte)
+            
+            adjusted_min_adx = self.min_adx * cycle_mult_adx
+            adjusted_volume_multiplier = self.volume_multiplier * cycle_mult_vol
+            
+            pico_vol = curr_vol > (avg_vol * adjusted_volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
-            tendencia_forte = ind['adx_1m'] >= self.min_adx
+            tendencia_forte = ind['adx_1m'] >= adjusted_min_adx
             volume_confirmado = ind.get('volume_divergence_ok', True)  # Volume não deve estar em queda extrema
             
             # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
@@ -315,11 +330,11 @@ class TradingStrategy:
             if final_signal == "HOLD" and self.last_hold_reason == "avaliando":
                 motivos = []
                 if not tendencia_forte:
-                    motivos.append(f"adx={ind['adx_1m']:.1f}<{self.min_adx}")
+                    motivos.append(f"adx={ind['adx_1m']:.1f}<{adjusted_min_adx:.1f}(base={self.min_adx:.1f}x{cycle_mult_adx:.2f})")
                 if not volat_ok:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
                 if not pico_vol:
-                    motivos.append(f"vol={curr_vol:.2f}<x{self.volume_multiplier}*avg({avg_vol:.2f})")
+                    motivos.append(f"vol={curr_vol:.2f}<x{adjusted_volume_multiplier:.2f}(base={self.volume_multiplier:.2f}x{cycle_mult_vol:.2f})*avg({avg_vol:.2f})")
                 if not volume_confirmado:
                     vol_momentum = ind.get('volume_momentum', 1.0)
                     motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")

@@ -8,6 +8,9 @@ import os
 from datetime import datetime, timedelta
 from collections import defaultdict
 from dataclasses import dataclass, asdict
+from src.logger import setup_logger
+
+log = setup_logger()
 
 @dataclass
 class TradeStats:
@@ -49,14 +52,59 @@ class TradingDashboard:
         self.stats = defaultdict(lambda: TradeStats(symbol=""))
         self.global_start = datetime.now()
         self.trade_history = []
+        self.reset_marker_file = "RESET_TRADES_TODAY.txt"
+        self.reset_timestamp = self._load_reset_marker()
         self._load_history()
     
+    def reset_today(self):
+        """Reset statistics to start fresh tracking from today (for Market Cycles deployment)"""
+        log.info("🔄 Resetando histórico de trades para rastreamento apenas de hoje...")
+        self.trade_history = []
+        self.stats = defaultdict(lambda: TradeStats(symbol=""))
+        self.global_start = datetime.now()
+        self.reset_timestamp = datetime.now()
+        
+        # Save reset marker
+        self._save_reset_marker()
+        
+        # Save empty history
+        self._save_history()
+        
+        log.info("✅ Histórico resetado. Win Rate tracking começará do zero a partir de agora.")
+    
+    def _load_reset_marker(self):
+        """Load timestamp of when trades were last reset"""
+        if os.path.exists(self.reset_marker_file):
+            try:
+                with open(self.reset_marker_file) as f:
+                    line = f.readline().strip()
+                    if line.startswith("Reset timestamp: "):
+                        ts_str = line.split("Reset timestamp: ")[1]
+                        return datetime.fromisoformat(ts_str)
+            except:
+                pass
+        # Default: load all trades (no reset)
+        return datetime.min
+    
+    def _save_reset_marker(self):
+        """Save timestamp of when trades were reset"""
+        with open(self.reset_marker_file, "w") as f:
+            f.write(f"Reset timestamp: {self.reset_timestamp.isoformat()}\n")
+            f.write(f"Reason: Market Cycles Integration - Fresh tracking\n")
+
+
+    
     def _load_history(self):
-        """Load trade history from persistent log"""
+        """Load trade history from persistent log, filtering by reset marker"""
         if os.path.exists(self.log_file):
             try:
                 with open(self.log_file) as f:
-                    self.trade_history = json.load(f)
+                    all_trades = json.load(f)
+                    # Filter trades: only include those after reset timestamp
+                    self.trade_history = [
+                        t for t in all_trades 
+                        if datetime.fromisoformat(t["timestamp"]) >= self.reset_timestamp
+                    ]
                     self._recalculate_stats()
             except:
                 pass

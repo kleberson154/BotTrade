@@ -14,6 +14,7 @@ from src.risk_manager import RiskManager
 from src.execution import ExecutionManager
 from src.logger import setup_logger
 from src.notifier import TelegramNotifier
+from src.market_cycles import MarketCycleAnalyzer
 
 from dotenv import load_dotenv
 
@@ -38,6 +39,9 @@ ULTIMO_CHECK_CALOR = 0
 LAST_HOLD_LOG = {}
 LAST_REGIME_LOG = 0
 REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
+
+# --- MARKET CYCLES ANALYZER (NEW) ---
+market_cycles = MarketCycleAnalyzer()
 
 # --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) ---
 COIN_CONFIGS = {
@@ -153,10 +157,17 @@ def execute_new_trade(symbol, signal, price, atr):
         regime = strat.current_regime  # Obtém regime da estratégia
         risk_mgr.set_leverage_for_regime(regime)
         
+        # 1.5. MARKET CYCLES: Ajusta leverage baseado em dominância BTC
+        cycle_adjustment = market_cycles.get_dominance_signal_adjustment()
+        market_cycle_mode = cycle_adjustment['risk_mode']
+        leverage_factor_cycle = cycle_adjustment['leverage_factor']
+        log.info(f"📊 Market Cycle: {market_cycle_mode} | Leverage factor: {leverage_factor_cycle}x")
+        
         # 2. Parâmetros de Risco com leverage dinâmico
         base_lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
         lev_mult = risk_mgr.get_leverage_multiplier()
-        lev = int(base_lev * lev_mult)
+        lev = int(base_lev * lev_mult * leverage_factor_cycle)  # Aplicar ajuste de ciclo
+        log.info(f"🎯 Leverage: {base_lev} * {lev_mult} * {leverage_factor_cycle} = {lev}x")
         
         # SL adaptativo baseado no ATR_MULTIPLIER do backtest
         atr_mult = getattr(strat, "atr_multiplier_sl", 1.8)
