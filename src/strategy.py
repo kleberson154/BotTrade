@@ -22,19 +22,19 @@ class TradingStrategy:
         self._dirty_1m = False
         self._dirty_15m = False
         
-        # --- PARÂMETROS OTIMIZADOS (SNIPER MODE) ---
+        # --- PARÂMETROS OTIMIZADOS (MODO AGRESSIVO) ---
         self.min_volatilidade_pct = 0.0014  # 0.14%
-        self.volume_multiplier = 1.6        # 160% acima da media
+        self.volume_multiplier = 1.2        # 120% acima da media (relaxado)
         self.ema_1m_trend = 20
         self.ema_15m_period = 200
         self.min_15m_candles = 200
-        self.min_adx = 25
+        self.min_adx = 15                   # Reduzido para 15 (era 25) - Modo Agressivo
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
         self.min_pnl_be = 0.007             # 0.7% para mover Stop
         self.distancia_respiro = 0.015      # 1.5% de Trailing
-        self.use_regime_filter = True       # Ativado por padrão para segurança
+        self.use_regime_filter = False      # Desativado - Modo Agressivo (+40% entradas)
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
