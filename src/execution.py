@@ -1,5 +1,6 @@
 import logging
 from src.multi_tp_manager import SMCTPManager
+from src.fibonacci_manager import FibonacciManager
 
 log = logging.getLogger(__name__)
 
@@ -10,6 +11,9 @@ class ExecutionManager:
         # 🆕 Gerenciamento SMC (Múltiplos TPs)
         self.tp_managers = {}  # {symbol: SMCTPManager}
         self.active_sessions = {}  # {symbol: TradingSession}
+        
+        # 📊 FIBONACCI MANAGER (Estratégia 1: Better Targets)
+        self.fib_manager = FibonacciManager(atr_pct=0.005)
 
     def has_open_position(self, symbol):
         try:
@@ -100,6 +104,69 @@ class ExecutionManager:
         log.info(f"   TP1: {tp1} (40%, SL→Entry)")
         log.info(f"   TP2: {tp2} (40%, SL→TP1)")
         log.info(f"   TP3: {tp3} (20%, Runner)")
+        
+        return tp_manager
+    
+    def setup_smc_management_with_fibonacci(self, symbol, side, entry, atr, swing_high=None, swing_low=None):
+        """
+        ⚡ ESTRATÉGIA 1: Setup SMC usando Fibonacci Targets em vez de ATR
+        
+        Calcula TPs em níveis de Fibonacci:
+        - TP1: 38.2% (saída rápida, 40% da posição)
+        - TP2: 61.8% (alvo dourado, 40% da posição)  
+        - TP3: 100% (movimento completo, 20% da posição/runner)
+        
+        E calcula SL protetor em Fibonacci também.
+        
+        Args:
+            symbol: Símbolo do ativo
+            side: "BUY" ou "SELL"
+            entry: Preço de entrada
+            atr: ATR em valor absoluto
+            swing_high: Máxima do swing (se None, usa entrada)
+            swing_low: Mínima do swing (se None, usa ATR como referência)
+        
+        Returns:
+            SMCTPManager configurado com Fibonacci targets
+        """
+        
+        if swing_high is None:
+            swing_high = entry * 1.02  # Proxy: 2% acima se não fornecido
+        if swing_low is None:
+            swing_low = entry * 0.98   # Proxy: 2% abaixo se não fornecido
+        
+        # Calcula targets Fibonacci
+        fibo_targets = self.fib_manager.calculate_targets_fibo(
+            entry, side, swing_high, swing_low, atr
+        )
+        
+        # SL é o calculado por Fibonacci (Estratégia 3)
+        sl = fibo_targets['sl']
+        
+        # TPs são os níveis de Fibonacci
+        tp1 = fibo_targets['tp1']  # 38.2%
+        tp2 = fibo_targets['tp3']  # 61.8% (Golden Ratio - mais importante)
+        tp3 = fibo_targets['tp4']  # 100%
+        
+        # Setup usando SMCTPManager (mantém a estrutura original)
+        tp_manager = SMCTPManager.create_smc_config(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            sl=sl,
+            tp1=tp1,
+            tp2=tp2,
+            tp3=tp3
+        )
+        
+        self.tp_managers[symbol] = tp_manager
+        
+        log.info(f"🎯 Gestão SMC com FIBONACCI ativada para {symbol}")
+        log.info(f"   Entry: {entry:.8f} | SL: {sl:.8f}")
+        log.info(f"   TP1 (38.2%): {tp1:.8f} (40%, saída rápida)")
+        log.info(f"   TP2 (61.8% Golden): {tp2:.8f} (40%, alvo principal)")
+        log.info(f"   TP3 (100%): {tp3:.8f} (20%, runner)")
+        log.info(f"   Swing Range: {fibo_targets['swing_range']:.8f}")
         
         return tp_manager
     

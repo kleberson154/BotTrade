@@ -7,6 +7,7 @@ from collections import deque as python_deque
 from src.signal_formatter import TradeSignalBuilder, SignalProfile
 from src.mack_compliance import MackCompliance, PositionSizer
 from src.multi_tp_manager import SMCTPManager
+from src.fibonacci_manager import FibonacciManager
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +95,13 @@ class TradingStrategy:
         self.last_trade_signal = None
         self.account_balance = 1000.0
         self.tp_manager = None
+        
+        # =========================================================
+        # FIBONACCI MANAGER (Estratégias 1, 2, 3)
+        # =========================================================
+        self.fib_manager = FibonacciManager(atr_pct=0.005)
+        self.fibo_confidence = 0.0  # Armazenar confidence para logs
+        self.fibo_targets = {}  # Armazenar targets calculados
 
     # =========================================================
     # UTILITÁRIOS DE CÁLCULO (OTIMIZADOS)
@@ -388,9 +396,24 @@ class TradingStrategy:
                             .build())
                         
                         self.last_trade_signal = signal
+                        
+                        # ⚡ ESTRATÉGIA 2: Fibonacci Confidence Boost
+                        max_15m = self.data_1m['high'].iloc[-16:-1].max()
+                        min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                        
+                        fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
+                            curr_price, curr_price, max_15m, min_15m, final_signal
+                        )
+                        
+                        self.fibo_confidence = fibo_confidence['confidence_boost']
+                        self.fibo_targets = self.fib_manager.calculate_targets_fibo(
+                            curr_price, final_signal, max_15m, min_15m, ind['atr_1m']
+                        )
+                        
                         log.info(
                             f"✅ [{self.symbol}] TradeSignal criado: {final_signal} @ {curr_price:.8f} "
-                            f"| RR: {validate_result['ratio']}:1 | SL: {sl_price:.8f} | TP: {tp_price:.8f}"
+                            f"| RR: {validate_result['ratio']}:1 | Fibo Level: {fibo_confidence['nearest_level']} "
+                            f"| Confidence: {fibo_confidence['confidence_boost']:+.2f}"
                         )
                     except Exception as e:
                         log.error(f"❌ Erro ao criar TradeSignal ({self.symbol}): {e}")

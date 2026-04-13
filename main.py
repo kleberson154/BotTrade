@@ -163,11 +163,16 @@ def execute_new_trade(symbol, signal, price, atr):
         leverage_factor_cycle = cycle_adjustment['leverage_factor']
         log.info(f"📊 Market Cycle: {market_cycle_mode} | Leverage factor: {leverage_factor_cycle}x")
         
+        # 1.6. FIBONACCI CONFIDENCE: Ajusta leverage baseado em proximidade a níveis Fibo
+        fibo_confidence_boost = getattr(strat, 'fibo_confidence', 0.0)
+        leverage_factor_fibo = 1.0 + fibo_confidence_boost  # Boost ou redução
+        log.info(f"📐 Fibonacci Level: {leverage_factor_fibo:.2f}x leverage multiplier")
+        
         # 2. Parâmetros de Risco com leverage dinâmico
         base_lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
         lev_mult = risk_mgr.get_leverage_multiplier()
-        lev = int(base_lev * lev_mult * leverage_factor_cycle)  # Aplicar ajuste de ciclo
-        log.info(f"🎯 Leverage: {base_lev} * {lev_mult} * {leverage_factor_cycle} = {lev}x")
+        lev = int(base_lev * lev_mult * leverage_factor_cycle * leverage_factor_fibo)  # Aplicar ambos ajustes
+        log.info(f"🎯 Leverage: {base_lev} * {lev_mult} * {leverage_factor_cycle} * {leverage_factor_fibo:.2f} = {lev}x")
         
         # SL adaptativo baseado no ATR_MULTIPLIER do backtest
         atr_mult = getattr(strat, "atr_multiplier_sl", 1.8)
@@ -207,6 +212,20 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.sl_price = sl
             strat.current_qty = float(qty)
             strat.partial_taken = False
+            
+            # 🎯 ESTRATÉGIA 1: Setup SMC com Fibonacci Targets
+            try:
+                swing_high = ind.get('swing_high', price * 1.02)
+                swing_low = ind.get('swing_low', price * 0.98)
+                executor.setup_smc_management_with_fibonacci(
+                    symbol, signal, price, atr, 
+                    swing_high=swing_high, 
+                    swing_low=swing_low
+                )
+            except Exception as e:
+                log.warning(f"⚠️ Fibonacci setup falhou para {symbol}: {e}")
+                # Fallback: usar setup SMC normal
+                executor.setup_smc_management(symbol, signal, price, sl, tp_dinamic * 0.618, tp_dinamic * 0.809, tp_dinamic)
             
             tp_pct = abs((tp_dinamic - price) / price) * 100
             notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL: {round(sl, p_prec)} | 🎯 TP: {round(tp_dinamic, p_prec)} (DYN: +{tp_pct:.1f}%)")

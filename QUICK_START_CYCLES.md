@@ -1,8 +1,9 @@
 # 🎯 QUICK START - Market Cycles Deployment
 
 ## PRÉ-REQUISITOS ✅
+
 - [x] Market Cycles Analyzer criado (`src/market_cycles.py`)
-- [x] Strategy.py integrado com ajustes dinâmicos  
+- [x] Strategy.py integrado com ajustes dinâmicos
 - [x] Main.py integrado com leverage factor
 - [x] Monitoring dashboard integrado com reset system
 - [x] Win Rate resetado para hoje
@@ -12,12 +13,14 @@
 ## 🚀 DEPLOY EM 3 PASSOS
 
 ### PASSO 1️⃣: START THE BOT
+
 ```bash
 cd c:\Users\zed15\OneDrive\Documentos\projetos\BotTrade
 python main.py
 ```
 
 **Sinais de sucesso:**
+
 ```
 ✅ Market Cycles Analyzer: Load BTC dominance OK
 ✅ Strategies loaded for 6 coins
@@ -30,11 +33,13 @@ python main.py
 ---
 
 ### PASSO 2️⃣: MONITOR EM PARALELO (em outro terminal)
+
 ```bash
 python monitoring_dashboard.py
 ```
 
 **O que você vai ver:**
+
 ```
 📊 LIVE PORTFOLIO STATS
 ├─ Win Rate: 0% → X% (crescente conforme trades chegam)
@@ -46,6 +51,7 @@ python monitoring_dashboard.py
 ---
 
 ### PASSO 3️⃣: VALIDAÇÃO (Checklist)
+
 Durante as 2-6 horas de DEMO:
 
 - [ ] Bot está rodando sem crashes
@@ -59,19 +65,20 @@ Durante as 2-6 horas de DEMO:
 
 ## 📈 PERFORMANCE TARGET
 
-| Métrica | Target | OK? |
-|---------|--------|-----|
-| Win Rate | >= 25% | |
-| Trades/hora | >= 2 | |
-| Erros | 0 | |
-| API Latency | < 500ms | |
-| Memory | < 300MB | |
+| Métrica     | Target  | OK? |
+| ----------- | ------- | --- |
+| Win Rate    | >= 25%  |     |
+| Trades/hora | >= 2    |     |
+| Erros       | 0       |     |
+| API Latency | < 500ms |     |
+| Memory      | < 300MB |     |
 
 ---
 
 ## ✅ PRÓXIMOS STAGES
 
 ### Se WR >= 25% após 2h:
+
 ```
 1. TESTNET: python main.py (com BYBIT_MODE="testnet")
 2. Duration: 2-4 horas com real balance
@@ -80,6 +87,7 @@ Durante as 2-6 horas de DEMO:
 ```
 
 ### Se WR < 20% ou erros frequentes:
+
 ```
 1. DIAGNOSTICS
 2. Possível tuning de parâmetros
@@ -92,27 +100,32 @@ Durante as 2-6 horas de DEMO:
 ## 🔧 USEFUL COMMANDS
 
 ### Ver logs em tempo real (últimas 50 linhas):
+
 ```bash
 tail -50 trading_bot.log
 ```
 
 ### Grep por sinais específicos:
+
 ```bash
 grep "BUY\|SELL" trading_bot.log | tail -20
 ```
 
 ### Grep por erros:
+
 ```bash
 grep -i "error\|exception" trading_bot.log
 ```
 
 ### Check if .json history is growing:
+
 ```bash
 wc -l trading_log.json
 ls -lh trading_log.json
 ```
 
 ### Ver Market Cycles adjustments:
+
 ```bash
 grep "Ajuste de ciclo\|leverage factor" trading_bot.log
 ```
@@ -122,11 +135,13 @@ grep "Ajuste de ciclo\|leverage factor" trading_bot.log
 ## 🚨 EMERGENCY STOP
 
 Quer parar tudo rapidamente?
+
 ```bash
 Ctrl+C em main.py terminal
 ```
 
 **Isso vai:**
+
 - ✅ Fechar posições abertas
 - ✅ Cancelar ordens pendentes
 - ✅ Salvar estado final
@@ -169,22 +184,26 @@ Ctrl+C em main.py terminal
 
 **Q: How do I know if Market Cycles is working?**
 A: Check logs for "Ajuste de ciclo" when RSI crosses 35 or 65
+
 ```bash
 grep "Ajuste de ciclo" trading_bot.log
 ```
 
 **Q: Win Rate not moving up?**
 A: Either:
+
 - No trades being executed (check for "BUY/SELL" signals)
 - Signals are all HOLDs (check HOLD motivos)
 - Check internet/API connection
 
 **Q: Bot crashed, do I lose trades?**
 A: No - all trades saved in `trading_log.json`
+
 - Restart: `python main.py` (will restore from file)
 
 **Q: Want to revert to old Win Rate tracking?**
 A: Delete `RESET_TRADES_TODAY.txt`
+
 - Next restart will load all historical trades
 
 ---
@@ -194,6 +213,7 @@ A: Delete `RESET_TRADES_TODAY.txt`
 Tudo foi implementado, testado, e integrado.
 
 **Time to shine:**
+
 ```
 python main.py
 ```
