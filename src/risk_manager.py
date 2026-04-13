@@ -1,6 +1,8 @@
 import datetime
 import pandas as pd
 import logging
+import os
+from pathlib import Path
 
 from src.mack_compliance import MackCompliance, PositionSizer
 
@@ -18,6 +20,10 @@ class RiskManager:
         self.total_fees = 0.0
         self.trades_history = []
         self.performance = {}  # Rastreamento de performance por moeda
+        
+        # 🔄 Sistema de Reset - Carrega timestamp de reset se existir
+        self.reset_timestamp = self._load_reset_timestamp()
+        self.reset_date_str = self._format_reset_date()
         
         # 🆕 INTEGRAÇÃO MACK: 5 Regras de Trading Disciplinado
         self.compliance = MackCompliance(account_balance=1000.0)
@@ -48,6 +54,51 @@ class RiskManager:
             "SUIUSDT": (1, 4),  "FETUSDT": (1, 4),  "OPUSDT": (1, 4),   
             "DEFAULT": (1, 4)
         }
+
+    # =========================================================
+    # 🆕 SISTEMA DE RESET - CARREGA TIMESTAMP DE REINÍCIO
+    # =========================================================
+    def _load_reset_timestamp(self):
+        """
+        Carrega o timestamp de reset do arquivo RESET_TRADES_TODAY.txt.
+        Se não existir, retorna None (calcula desde o início).
+        """
+        reset_file = Path("RESET_TRADES_TODAY.txt")
+        if reset_file.exists():
+            try:
+                with open(reset_file, 'r') as f:
+                    timestamp_str = f.read().strip()
+                    # Parse timestamp ISO format: 2026-04-13T02:12:05.047564
+                    return datetime.datetime.fromisoformat(timestamp_str)
+            except Exception as e:
+                log.warning(f"⚠️ Erro ao carregar reset timestamp: {e}")
+                return None
+        return None
+    
+    def _format_reset_date(self):
+        """
+        Formata a data de reset em formato legível (DD/MM).
+        Usado no dashboard.
+        """
+        if self.reset_timestamp:
+            return self.reset_timestamp.strftime("%d/%m")
+        return "18/03"  # Fallback histórico
+    
+    def _is_trade_after_reset(self, trade_timestamp):
+        """
+        Verifica se um trade ocorreu APÓS o reset.
+        Se não há reset configurado, considera todos os trades.
+        """
+        if not self.reset_timestamp:
+            return True  # Sem reset, aceita todos
+        
+        if isinstance(trade_timestamp, str):
+            try:
+                trade_timestamp = datetime.datetime.fromisoformat(trade_timestamp)
+            except:
+                return False
+        
+        return trade_timestamp >= self.reset_timestamp
 
     # =========================================================
     # 2. GESTÃO DE DESEMPENHO (DASHBOARD)
@@ -123,7 +174,7 @@ class RiskManager:
         total, wins, prot, wr, sr, pnl_net = self.get_performance_stats()
 
         print("\n" + "═"*45)
-        print(f" 📊  DASHBOARD DE PERFORMANCE (Desde 18/03)")
+        print(f" 📊  DASHBOARD DE PERFORMANCE (Desde {self.reset_date_str})")
         print(f" 📈  Win Rate Real: {wr:5.1f}% | 🛡️ Sobrevivência: {sr:5.1f}%")
         print(f" 🔄  Total: {total:3} (✅:{wins} | 🛡️:{prot} | ❌:{total-wins-prot})")
         print(f" 💰  PnL Líquido Total: ${pnl_net:8.2f}")
