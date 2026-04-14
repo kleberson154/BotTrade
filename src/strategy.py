@@ -6,10 +6,15 @@ from collections import deque as python_deque
 
 from src.signal_formatter import TradeSignalBuilder, SignalProfile
 from src.mack_compliance import MackCompliance, PositionSizer
-from src.multi_tp_manager import SMCTPManager
+from src.tp_cascade_manager import TPCascadeManager
 from src.fibonacci_manager import FibonacciManager
 
 log = logging.getLogger(__name__)
+
+
+def get_leverage_for_symbol(symbol: str) -> int:
+    """⚡ Leverage dinâmico: 10x para BTC/ETH, 5x para outros"""
+    return 10 if symbol in ["BTCUSDT", "ETHUSDT"] else 5
 
 class TradingStrategy:
     def __init__(self, symbol, notifier):
@@ -22,9 +27,10 @@ class TradingStrategy:
         self._dirty_1m = False
         self._dirty_15m = False
         
-        # --- PARÂMETROS OTIMIZADOS (MODO AGRESSIVO) ---
-        self.min_volatilidade_pct = 0.0014  # 0.14%
-        self.volume_multiplier = 1.2        # 120% acima da media (relaxado)
+        # ⚡ LEVERAGE DINÂMICO
+        self.base_leverage = get_leverage_for_symbol(symbol)  # 5x ou 10x
+        
+        # 📊 PARÂMETROS DE ENTRADA (Scalping - Modo Agressivo)
         self.ema_1m_trend = 20
         self.ema_15m_period = 200
         self.min_15m_candles = 200
@@ -32,8 +38,7 @@ class TradingStrategy:
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
-        self.min_pnl_be = 0.007             # 0.7% para mover Stop
-        self.distancia_respiro = 0.015      # 1.5% de Trailing
+        # Cascata de TPs (não mais TRAILING STOP)
         self.use_regime_filter = False      # Desativado - Modo Agressivo (+40% entradas)
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
@@ -81,9 +86,10 @@ class TradingStrategy:
         self.entry_price = 0
         self.sl_price = 0
         self.tp_price = 0
-        self.be_activated = False 
-        self.partial_taken = False 
         self.last_hold_reason = "init"
+        
+        # Cascata de TPs (novo sistema)
+        self.tp_cascade = None  # Será criado quando entrar em posição
         
         # =========================================================
         # INTEGRAÇÃO MACK - TradeSignalBuilder + Compliance
@@ -93,8 +99,10 @@ class TradingStrategy:
         self.compliance = MackCompliance()
         self.position_sizer = PositionSizer()
         self.last_trade_signal = None
-        self.account_balance = 1000.0
-        self.tp_manager = None
+        self.account_balance = 100.0  # Será atualizado via main.py
+        
+        # Risco fixo em 2% (disciplinado conforme Mack)
+        self.risk_percent = 0.02  # SEMPRE 2%
         
         # =========================================================
         # FIBONACCI MANAGER (Estratégias 1, 2, 3)
@@ -362,21 +370,21 @@ class TradingStrategy:
             # 🆕 INTEGRAÇÃO MACK: Validação RR 1:2 Antes de Retornar
             # =========================================================
             if final_signal in ["BUY", "SELL"]:
-                # Calcular TP com base na distância SL (RR 1:2 mínimo)
-                tp_distance = dist_sl * 2  # TP é 2x a distância do SL
+                # Calcular SL e TP1 base com RR 1:2 mínimo
+                tp1_distance = dist_sl * 2  # TP1 é 2x a distância do SL (garante RR 1:2)
                 
                 if final_signal == "BUY":
-                    tp_price = curr_price + tp_distance
+                    tp1_price = curr_price + tp1_distance
                     sl_price = curr_price - dist_sl
                 else:  # SELL
-                    tp_price = curr_price - tp_distance
+                    tp1_price = curr_price - tp1_distance
                     sl_price = curr_price + dist_sl
                 
                 # Validar regra 1: Risk:Reward 1:2 mínimo
                 validate_result = self.compliance.validate_rr_ratio(
                     entry=curr_price,
                     sl=sl_price,
-                    tp=tp_price,
+                    tp=tp1_price,
                     side="LONG" if final_signal == "BUY" else "SHORT",
                     symbol=self.symbol
                 )
@@ -390,36 +398,87 @@ class TradingStrategy:
                     final_signal = "HOLD"
                     self.last_hold_reason = f"RR violada: {validate_result['ratio']}:1 < 1:2"
                 else:
-                    # RR aprovada, criar TradeSignal
+                    # RR aprovada, criar TradeSignal COM CASCATA DE TPS
                     try:
-                        signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
-                            .with_stops(sl_price, tp_price)
-                            .with_leverage(10)
-                            .with_profile(SignalProfile.BALANCED)
-                            .build())
-                        
-                        self.last_trade_signal = signal
-                        
-                        # ⚡ ESTRATÉGIA 2: Fibonacci Confidence Boost
-                        max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                        min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                        
-                        fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
-                            curr_price, curr_price, max_15m, min_15m, final_signal
+                        # ====== CASCATA DE TPS REALISTA ======
+                        # 1. Criar gerenciador de cascata
+                        self.tp_cascade = TPCascadeManager(
+                            symbol=self.symbol,
+                            side="LONG" if final_signal == "BUY" else "SHORT",
+                            entry=curr_price,
+                            initial_sl=sl_price,
+                            account_balance=self.account_balance,
+                            leverage=10
                         )
                         
-                        self.fibo_confidence = fibo_confidence['confidence_boost']
-                        self.fibo_targets = self.fib_manager.calculate_targets_fibo(
-                            curr_price, final_signal, max_15m, min_15m, ind['atr_1m']
+                        # 2. Calcular TPs realistas baseado em volatilidade
+                        market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
+                        self.tp_cascade.calculate_scalp_tps(
+                            atr_pct=ind['atr_pct'],
+                            market_volatility=market_volatility
                         )
                         
-                        log.info(
-                            f"✅ [{self.symbol}] TradeSignal criado: {final_signal} @ {curr_price:.8f} "
-                            f"| RR: {validate_result['ratio']}:1 | Fibo Level: {fibo_confidence['nearest_level']} "
-                            f"| Confidence: {fibo_confidence['confidence_boost']:+.2f}"
+                        # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
+                        qty = self.position_sizer.calculate_qty(
+                            account_balance=self.account_balance,
+                            entry_price=curr_price,
+                            sl_price=sl_price,
+                            risk_percent=0.02,  # FIXO EM 2% SEMPRE
+                            side="LONG" if final_signal == "BUY" else "SHORT"
                         )
+                        
+                        # 4. Validar alavancagem
+                        leverage_ok = self.position_sizer.validate_leverage(
+                            qty=qty,
+                            entry_price=curr_price,
+                            max_leverage=10
+                        )
+                        
+                        if not leverage_ok:
+                            final_signal = "HOLD"
+                            self.last_hold_reason = "Leverage excedido (>10x) com 2% risk"
+                            log.warning(f"⚠️ [{self.symbol}] Alavancagem excedida")
+                        else:
+                            # 5. Criar TradeSignal (com TP1 como referência)
+                            tp1_price = self.tp_cascade.tp_levels[0].tp_price
+                            signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
+                                .with_stops(sl_price, tp1_price)
+                                .with_leverage(10)
+                                .with_profile(SignalProfile.BALANCED)
+                                .build())
+                            
+                            self.last_trade_signal = signal
+                            
+                            # 6. Fibonacci boost (se aplicável)
+                            max_15m = self.data_1m['high'].iloc[-16:-1].max()
+                            min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                            
+                            fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
+                                curr_price, curr_price, max_15m, min_15m, final_signal
+                            )
+                            
+                            self.fibo_confidence = fibo_confidence['confidence_boost']
+                            self.fibo_targets = self.fib_manager.calculate_targets_fibo(
+                                curr_price, final_signal, max_15m, min_15m, 
+                                atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
+                            )
+                            
+                            log.info(
+                                f"✅ [{self.symbol}] TradeSignal criado (novo TP Cascade):\n"
+                                f"  Sinal: {final_signal} @ {curr_price:.8f}\n"
+                                f"  Qty: {qty:.4f}\n"
+                                f"  SL: {sl_price:.8f}\n"
+                                f"  TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
+                                f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
+                                f"{self.tp_cascade.tp_levels[2].tp_price:.8f}\n"
+                                f"  RR: {validate_result['ratio']}:1 | Risk: 2% (${self.account_balance*0.02:.2f}) | "
+                                f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f})"
+                            )
+                    
                     except Exception as e:
-                        log.error(f"❌ Erro ao criar TradeSignal ({self.symbol}): {e}")
+                        log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
+                        final_signal = "HOLD"
+                        self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
 
             return final_signal, dist_sl
 
@@ -428,41 +487,38 @@ class TradingStrategy:
             return "HOLD", 0
 
     # =========================================================
-    # GESTÃO DE RISCO
+    # GESTÃO DE RISCO - CASCATA DE TPS
     # =========================================================
-    def monitor_protection(self, current_price):
-        if not self.is_positioned: return None
-    
-        pnl_pct = (current_price - self.entry_price) / self.entry_price if self.side == "BUY" else (self.entry_price - current_price) / self.entry_price
-        changed = False
+    def check_cascade_tp(self, current_price):
+        """
+        Monitora cascata de TPs e retorna ação se algum foi atingido.
         
-        # 1. BREAK-EVEN (Proteção + Taxas da Corretora)
-        if not self.be_activated and pnl_pct >= self.min_pnl_be:
-            self.be_activated = True
-            # Adiciona 0.1% além da entrada para pagar os custos de execução (Maker/Taker)
-            offset = 0.001 
-            self.sl_price = self.entry_price * (1 + offset if self.side == "BUY" else 1 - offset)
-            changed = True
-    
-        # 2. SAÍDA PARCIAL (Reduz risco em 1.5% de lucro)
-        if not self.partial_taken and pnl_pct >= 0.015:
-            self.partial_taken = True
-            return "PARTIAL_EXIT"
-    
-        # 3. TRAILING STOP DINÂMICO (Ativa em 2.5% de lucro)
-        if pnl_pct >= 0.025:
-            if self.side == "BUY":
-                novo_sl = current_price * (1 - self.distancia_respiro)
-                if novo_sl > self.sl_price:
-                    self.sl_price = novo_sl
-                    changed = True
-            else:
-                novo_sl = current_price * (1 + self.distancia_respiro)
-                if self.sl_price == 0 or novo_sl < self.sl_price:
-                    self.sl_price = novo_sl
-                    changed = True
-    
-        return "UPDATE_SL" if changed else None
+        Retorna: {
+            "action": "CLOSE_PARTIAL" | "COMPLETE",
+            "tp_hit": 1/2/3,
+            "close_percent": quantidade a fechar,
+            "new_sl": novo stop loss
+        } ou None se nada foi atingido
+        """
+        
+        if not self.is_positioned or self.tp_cascade is None:
+            return None
+        
+        result = self.tp_cascade.check_cascade_hit(current_price)
+        
+        if result["action"] == "CLOSE_PARTIAL":
+            # Atualizar SL conforme cascata determina
+            self.sl_price = result["new_sl"]
+            
+            log.info(
+                f"✅ [{self.symbol}] Cascata recomenda: TP{result['tp_hit']} hit\n"
+                f"  Fechar: {result['close_percent']}%\n"
+                f"  Novo SL: {self.sl_price:.8f}"
+            )
+            
+            return result
+        
+        return None
 
     # =========================================================
     # SINCRONIZAÇÃO E DADOS
@@ -491,12 +547,39 @@ class TradingStrategy:
             self._dirty_15m = False
             
     def sync_position(self, side, entry_price, sl_price, tp_price):
+        """
+        Sincroniza posição aberta com a estratégia.
+        Cria cascata de TPs para gerenciar saídas.
+        """
         self.is_positioned = True
         self.side = "BUY" if side == "Buy" else "SELL"
         self.entry_price = self.safe_float(entry_price)
         self.sl_price = self.safe_float(sl_price)
         self.tp_price = self.safe_float(tp_price)
-        log.info(f"🔄 [{self.symbol}] Sincronizado: {self.side} @ {self.entry_price}")
+        
+        # Criar cascata de TPs para a posição sincronizada
+        self.tp_cascade = TPCascadeManager(
+            symbol=self.symbol,
+            side=self.side,
+            entry=self.entry_price,
+            initial_sl=self.sl_price,
+            account_balance=self.account_balance,
+            leverage=10
+        )
+        
+        # Calcular TPs realistas
+        self.tp_cascade.calculate_scalp_tps(
+            atr_pct=0.001,  # ATR genérico (será atualizado em check_signal)
+            market_volatility=self.current_regime
+        )
+        
+        log.info(
+            f"🔄 [{self.symbol}] Sincronizado: {self.side} @ {self.entry_price}\n"
+            f"  SL: {self.sl_price:.8f}\n"
+            f"  Cascata TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
+            f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
+            f"{self.tp_cascade.tp_levels[2].tp_price:.8f}"
+        )
 
     def load_historical_data(self, timeframe, candles):
         target = self.candles_1m if timeframe == "1m" else self.candles_15m

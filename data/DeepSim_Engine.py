@@ -154,7 +154,8 @@ class DeepSimulator:
                     self.strat.is_positioned, self.strat.side = True, signal
                     self.strat.entry_price, self.strat.sl_price, self.strat.tp_price = entry_price, sl, tp
             else:
-                res = self.strat.monitor_protection(row_close)
+                # Monitorar cascata de TPs
+                res = self.strat.check_cascade_tp(row_close)
                 if res == "PARTIAL_EXIT" and not self.trades[-1]['partial_executed']:
                     self.trades[-1]['partial_price'] = row_close
                     self.trades[-1]['partial_executed'] = True

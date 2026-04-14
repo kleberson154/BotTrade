@@ -59,7 +59,8 @@ class MultiBacktester:
 
             if strat.is_positioned:
                 # Lógica de Saída/Proteção
-                status = strat.monitor_protection(current_price)
+                # Monitorar cascata de TPs
+                status = strat.check_cascade_tp(current_price)
                 
                 # Checagem de Stop
                 is_stop = (strat.side == "BUY" and current_price <= strat.sl_price) or \

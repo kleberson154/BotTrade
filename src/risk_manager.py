@@ -285,9 +285,9 @@ class RiskManager:
     # =========================================================
     def get_sl_tp_adaptive(self, symbol, side, price, atr, leverage):
         """
-        Define o Stop Loss e Take Profit inicial.
-        O SL é baseado no ATR (volatilidade), mas o monitor_protection 
-        vai assumir o controle depois.
+        Define o Stop Loss inicial.
+        O SL é baseado no ATR (volatilidade), e então a cascata de TPs
+        (check_cascade_tp) vai gerenciar saídas parciais em TP1, TP2, TP3.
         """
         distancia_sl = atr * 2.2 # Stop técnico curto
         

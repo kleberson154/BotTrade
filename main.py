@@ -122,7 +122,10 @@ def handle_signal_logic(message):
 
         # 1. Proteção de Posição Ativa
         if strat.is_positioned:
-            status = strat.monitor_protection(current_price)
+            # Monitorar cascata de TPs
+            status = strat.check_cascade_tp(current_price)
+            if status and status.get('action') == 'CLOSE_PARTIAL':
+                log.info(f"Cascata: {status}")
             if status == "UPDATE_SL":
                 update_remote_sl(symbol, strat.sl_price)
             elif status == "PARTIAL_EXIT":
