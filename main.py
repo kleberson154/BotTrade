@@ -241,6 +241,11 @@ def execute_new_trade(symbol, signal, price, atr):
             tp_pct = abs((tp_dinamic - price) / price) * 100
             notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL: {round(sl, p_prec)} | 🎯 TP: {round(tp_dinamic, p_prec)} (DYN: +{tp_pct:.1f}%)")
             
+            # ⭐ Enviar score de indicadores no Telegram
+            score_msg = strat.get_score_message()
+            if score_msg and score_msg != "Nenhum score calculado":
+                notifier.send_message(score_msg)
+            
     except Exception as e:
         log.error(f"Erro abertura {symbol}: {e}")
 

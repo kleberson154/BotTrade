@@ -8,6 +8,7 @@ from src.signal_formatter import TradeSignalBuilder, SignalProfile
 from src.mack_compliance import MackCompliance, PositionSizer
 from src.tp_cascade_manager import TPCascadeManager
 from src.fibonacci_manager import FibonacciManager
+from src.indicator_scorer import IndicatorScorer
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +111,12 @@ class TradingStrategy:
         self.fib_manager = FibonacciManager(atr_pct=0.005)
         self.fibo_confidence = 0.0  # Armazenar confidence para logs
         self.fibo_targets = {}  # Armazenar targets calculados
+        
+        # =========================================================
+        # ⭐ SISTEMA DE PONTUAÇÃO DE INDICADORES
+        # =========================================================
+        self.indicator_scorer = IndicatorScorer(min_score=3, symbol=symbol)
+        self.last_score_result = None  # Último resultado de score
 
     # =========================================================
     # UTILITÁRIOS DE CÁLCULO (OTIMIZADOS)
@@ -398,87 +405,106 @@ class TradingStrategy:
                     final_signal = "HOLD"
                     self.last_hold_reason = f"RR violada: {validate_result['ratio']}:1 < 1:2"
                 else:
-                    # RR aprovada, criar TradeSignal COM CASCATA DE TPS
-                    try:
-                        # ====== CASCATA DE TPS REALISTA ======
-                        # 1. Criar gerenciador de cascata
-                        self.tp_cascade = TPCascadeManager(
-                            symbol=self.symbol,
-                            side="LONG" if final_signal == "BUY" else "SHORT",
-                            entry=curr_price,
-                            initial_sl=sl_price,
-                            account_balance=self.account_balance,
-                            leverage=10
-                        )
-                        
-                        # 2. Calcular TPs realistas baseado em volatilidade
-                        market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
-                        self.tp_cascade.calculate_scalp_tps(
-                            atr_pct=ind['atr_pct'],
-                            market_volatility=market_volatility
-                        )
-                        
-                        # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
-                        qty = self.position_sizer.calculate_qty(
-                            account_balance=self.account_balance,
-                            entry_price=curr_price,
-                            sl_price=sl_price,
-                            risk_percent=0.02,  # FIXO EM 2% SEMPRE
-                            side="LONG" if final_signal == "BUY" else "SHORT"
-                        )
-                        
-                        # 4. Validar alavancagem
-                        leverage_ok = self.position_sizer.validate_leverage(
-                            qty=qty,
-                            entry_price=curr_price,
-                            max_leverage=10
-                        )
-                        
-                        if not leverage_ok:
-                            final_signal = "HOLD"
-                            self.last_hold_reason = "Leverage excedido (>10x) com 2% risk"
-                            log.warning(f"⚠️ [{self.symbol}] Alavancagem excedida")
-                        else:
-                            # 5. Criar TradeSignal (com TP1 como referência)
-                            tp1_price = self.tp_cascade.tp_levels[0].tp_price
-                            signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
-                                .with_stops(sl_price, tp1_price)
-                                .with_leverage(10)
-                                .with_profile(SignalProfile.BALANCED)
-                                .build())
-                            
-                            self.last_trade_signal = signal
-                            
-                            # 6. Fibonacci boost (se aplicável)
-                            max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                            min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                            
-                            fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
-                                curr_price, curr_price, max_15m, min_15m, final_signal
-                            )
-                            
-                            self.fibo_confidence = fibo_confidence['confidence_boost']
-                            self.fibo_targets = self.fib_manager.calculate_targets_fibo(
-                                curr_price, final_signal, max_15m, min_15m, 
-                                atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
-                            )
-                            
-                            log.info(
-                                f"✅ [{self.symbol}] TradeSignal criado (novo TP Cascade):\n"
-                                f"  Sinal: {final_signal} @ {curr_price:.8f}\n"
-                                f"  Qty: {qty:.4f}\n"
-                                f"  SL: {sl_price:.8f}\n"
-                                f"  TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
-                                f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
-                                f"{self.tp_cascade.tp_levels[2].tp_price:.8f}\n"
-                                f"  RR: {validate_result['ratio']}:1 | Risk: 2% (${self.account_balance*0.02:.2f}) | "
-                                f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f})"
-                            )
+                    # ⭐ VALIDAÇÃO 2: SCORE DE INDICADORES
+                    score_result = self.indicator_scorer.calculate_score(
+                        df=self.data_1m.tail(100),
+                        min_adx=self.min_adx,
+                        min_volatilidade=self.min_volatilidade_pct,
+                        volume_multiplier=self.volume_multiplier
+                    )
                     
-                    except Exception as e:
-                        log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
+                    self.last_score_result = score_result
+                    
+                    if not score_result["triggered"]:
+                        # Score insuficiente
+                        log.warning(
+                            f"⚠️ [{self.symbol}] Score insuficiente: {score_result['score']}/{score_result['total_indicators']} "
+                            f"(min: {score_result['min_required']})"
+                        )
                         final_signal = "HOLD"
-                        self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
+                        self.last_hold_reason = f"Score: {score_result['score']}/{score_result['total_indicators']} " \
+                                                f"(min: {score_result['min_required']})"
+                    else:
+                        # ✅ Score aprovado, criar TradeSignal COM CASCATA DE TPS
+                        try:
+                            # ====== CASCATA DE TPS REALISTA ======
+                            # 1. Criar gerenciador de cascata
+                            self.tp_cascade = TPCascadeManager(
+                                symbol=self.symbol,
+                                side="LONG" if final_signal == "BUY" else "SHORT",
+                                entry=curr_price,
+                                initial_sl=sl_price,
+                                account_balance=self.account_balance,
+                                leverage=self.base_leverage
+                            )
+                            
+                            # 2. Calcular TPs realistas baseado em volatilidade
+                            market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
+                            self.tp_cascade.calculate_scalp_tps(
+                                market_volatility=market_volatility
+                            )
+                            
+                            # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
+                            qty = self.position_sizer.calculate_qty(
+                                account_balance=self.account_balance,
+                                entry_price=curr_price,
+                                sl_price=sl_price,
+                                risk_percent=0.02,  # FIXO EM 2% SEMPRE
+                                side="LONG" if final_signal == "BUY" else "SHORT"
+                            )
+                            
+                            # 4. Validar alavancagem
+                            leverage_ok = self.position_sizer.validate_leverage(
+                                qty=qty,
+                                entry_price=curr_price,
+                                max_leverage=10
+                            )
+                            
+                            if not leverage_ok:
+                                final_signal = "HOLD"
+                                self.last_hold_reason = "Leverage excedido (>10x) com 2% risk"
+                                log.warning(f"⚠️ [{self.symbol}] Alavancagem excedida")
+                            else:
+                                # 5. Criar TradeSignal (com TP1 como referência)
+                                tp1_price = self.tp_cascade.tp_levels[0].tp_price
+                                signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
+                                    .with_stops(sl_price, tp1_price)
+                                    .with_leverage(10)
+                                    .with_profile(SignalProfile.BALANCED)
+                                    .build())
+                                
+                                self.last_trade_signal = signal
+                                
+                                # 6. Fibonacci boost (se aplicável)
+                                max_15m = self.data_1m['high'].iloc[-16:-1].max()
+                                min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                                
+                                fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
+                                    curr_price, curr_price, max_15m, min_15m, final_signal
+                                )
+                                
+                                self.fibo_confidence = fibo_confidence['confidence_boost']
+                                self.fibo_targets = self.fib_manager.calculate_targets_fibo(
+                                    curr_price, final_signal, max_15m, min_15m, 
+                                    atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
+                                )
+                                
+                                log.info(
+                                    f"✅ [{self.symbol}] TradeSignal criado (novo TP Cascade):\n"
+                                    f"  Sinal: {final_signal} @ {curr_price:.8f}\n"
+                                    f"  Qty: {qty:.4f}\n"
+                                    f"  SL: {sl_price:.8f}\n"
+                                    f"  TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
+                                    f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
+                                    f"{self.tp_cascade.tp_levels[2].tp_price:.8f}\n"
+                                    f"  RR: {validate_result['ratio']}:1 | Risk: 2% (${self.account_balance*0.02:.2f}) | "
+                                    f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f})"
+                                )
+                        
+                        except Exception as e:
+                            log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
+                            final_signal = "HOLD"
+                            self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
 
             return final_signal, dist_sl
 
@@ -569,7 +595,6 @@ class TradingStrategy:
         
         # Calcular TPs realistas
         self.tp_cascade.calculate_scalp_tps(
-            atr_pct=0.001,  # ATR genérico (será atualizado em check_signal)
             market_volatility=self.current_regime
         )
         
@@ -580,6 +605,13 @@ class TradingStrategy:
             f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
             f"{self.tp_cascade.tp_levels[2].tp_price:.8f}"
         )
+    
+    def get_score_message(self) -> str:
+        """Retorna mensagem formatada de score para Telegram"""
+        if not self.last_score_result:
+            return "Nenhum score calculado"
+        
+        return self.indicator_scorer.get_telegram_message(self.side or "BUY")
 
     def load_historical_data(self, timeframe, candles):
         target = self.candles_1m if timeframe == "1m" else self.candles_15m
