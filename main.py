@@ -124,12 +124,11 @@ def handle_signal_logic(message):
         if strat.is_positioned:
             # Monitorar cascata de TPs
             status = strat.check_cascade_tp(current_price)
-            if status and status.get('action') == 'CLOSE_PARTIAL':
-                log.info(f"Cascata: {status}")
-            if status == "UPDATE_SL":
-                update_remote_sl(symbol, strat.sl_price)
-            elif status == "PARTIAL_EXIT":
+            if status and isinstance(status, dict) and status.get('action') == 'CLOSE_PARTIAL':
+                # TP foi atingido - executar close parcial
                 execute_partial_tp(symbol, strat, current_price)
+                # Atualizar SL remoto conforme novo stop loss
+                update_remote_sl(symbol, status.get('new_sl', strat.sl_price))
 
         # 2. Busca por Entrada (Passando o sentimento e respeitando o intervalo do Backtest)
         elif is_confirmado and symbol in SYMBOLS:

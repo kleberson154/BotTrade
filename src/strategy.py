@@ -532,7 +532,7 @@ class TradingStrategy:
         
         result = self.tp_cascade.check_cascade_hit(current_price)
         
-        if result["action"] == "CLOSE_PARTIAL":
+        if result and result.get("action") == "CLOSE_PARTIAL":
             # Atualizar SL conforme cascata determina
             self.sl_price = result["new_sl"]
             
