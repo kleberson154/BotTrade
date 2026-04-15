@@ -23,7 +23,7 @@ class RiskManager:
         self.performance = {}  # Rastreamento de performance por moeda
         
         # � Timestamp de reset dos stats
-        self.reset_date_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.reset_date_str = "2026-04-13 00:00:00"
         
         # �💰 Balance sincronizado com Bybit
         self.account_balance = account_balance
