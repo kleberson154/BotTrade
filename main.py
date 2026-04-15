@@ -15,6 +15,8 @@ from src.execution import ExecutionManager
 from src.logger import setup_logger
 from src.notifier import TelegramNotifier
 from src.market_cycles import MarketCycleAnalyzer
+from src.tp_cascade_manager import TPCascadeManager
+from src.market_sentiment import MarketSentimentAnalyzer
 
 from dotenv import load_dotenv
 
@@ -43,38 +45,19 @@ REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
 # --- MARKET CYCLES ANALYZER (NEW) ---
 market_cycles = MarketCycleAnalyzer()
 
-# --- CONFIGURAÇÕES VALIDADAS NO BACKTEST (PnL +47.6%) + 8 NOVAS MOEDAS ---
-COIN_CONFIGS = {
-    "BTCUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "XRPUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "NEARUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "LINKUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 30, "invert_signal": True, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
-    "SUIUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "OPUSDT":   {"atr_multiplier_sl": 2.0, "min_pnl_be": 0.005, "distancia_respiro": 0.018, "min_adx": 32, "invert_signal": False, "use_regime_filter": True, "allow_short": False, "signal_check_interval": 6},
-    "IRYUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "HYPEUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "AVAXUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "SOLUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "ADAUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "DOTUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "LYNUSDT":  {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-    "TAVEUSDT": {"atr_multiplier_sl": 1.8, "min_pnl_be": 0.005, "distancia_respiro": 0.015, "min_adx": 28, "invert_signal": True, "use_regime_filter": True, "signal_check_interval": 6},
-}
+# --- MARKET SENTIMENT ANALYZER ---
+sentiment_analyzer = MarketSentimentAnalyzer()
 
-# --- BEST PERFORMERS ONLY (6 coins: 30.87% WR, +20.27% PnL) ---
-
+# --- ESTRATÉGIAS INICIALIZADAS COM ANÁLISE DINÂMICA ---
 notifier = TelegramNotifier()
 strategies = {}
 for symbol in SYMBOLS:
     strat = TradingStrategy(symbol=symbol, notifier=notifier)
-    config = COIN_CONFIGS.get(symbol, {})
-    for key, value in config.items():
-        setattr(strat, key, value) 
     strategies[symbol] = strat
 
 # --- INICIALIZAÇÃO DE COMPONENTES GLOBAIS ---
 log = setup_logger()
-risk_mgr = RiskManager()
+risk_mgr = RiskManager(account_balance=100.0)  # Será atualizado após primeira leitura de balance
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
 executor = ExecutionManager(session)
 message_queue = Queue()
@@ -163,54 +146,92 @@ def execute_new_trade(symbol, signal, price, atr):
         strat = strategies[symbol]
         side = "Buy" if signal == "BUY" else "Sell"
         
-        # 1. Ajusta leverage baseado no regime atual
-        regime = strat.current_regime  # Obtém regime da estratégia
-        risk_mgr.set_leverage_for_regime(regime)
+        # 1. Fetch BTC Dominância
+        btc_dominance = market_cycles.fetch_btc_dominance()
+        if btc_dominance is None:
+            btc_dominance = 50
         
-        # 1.5. MARKET CYCLES: Ajusta leverage baseado em dominância BTC
-        cycle_adjustment = market_cycles.get_dominance_signal_adjustment()
-        market_cycle_mode = cycle_adjustment['risk_mode']
-        leverage_factor_cycle = cycle_adjustment['leverage_factor']
-        log.info(f"📊 Market Cycle: {market_cycle_mode} | Leverage factor: {leverage_factor_cycle}x")
+        # 2. Calcular sentimento de mercado
+        volatility = (atr / price) if price > 0 else 0.001
         
-        # 1.6. FIBONACCI CONFIDENCE: Ajusta leverage baseado em proximidade a níveis Fibo
-        fibo_confidence_boost = getattr(strat, 'fibo_confidence', 0.0)
-        leverage_factor_fibo = 1.0 + fibo_confidence_boost  # Boost ou redução
-        log.info(f"📐 Fibonacci Level: {leverage_factor_fibo:.2f}x leverage multiplier")
+        # Estimar RSI simples (14 períodos)
+        if len(strat.data_1m) >= 14:
+            delta = strat.data_1m['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi_value = 100 - (100 / (1 + rs.iloc[-1]))
+            if pd.isna(rsi_value):
+                rsi_value = 50
+        else:
+            rsi_value = 50
         
-        # 2. Parâmetros de Risco com leverage dinâmico
-        base_lev, qty = risk_mgr.get_dynamic_risk_params(price, price * 0.985, cache_balance['total'])
-        lev_mult = risk_mgr.get_leverage_multiplier()
-        lev = int(base_lev * lev_mult * leverage_factor_cycle * leverage_factor_fibo)  # Aplicar ambos ajustes
-        log.info(f"🎯 Leverage: {base_lev} * {lev_mult} * {leverage_factor_cycle} * {leverage_factor_fibo:.2f} = {lev}x")
+        # Volume ratio (atual vs média 20 candles)
+        if len(strat.data_1m) >= 20:
+            avg_vol_20 = strat.data_1m['volume'].tail(20).mean()
+            curr_vol = strat.data_1m['volume'].iloc[-1]
+            volume_ratio = curr_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
+        else:
+            volume_ratio = 1.0
         
-        # SL adaptativo baseado no ATR_MULTIPLIER do backtest
-        atr_mult = getattr(strat, "atr_multiplier_sl", 1.8)
+        # Calcular sentimento
+        sentiment_data = sentiment_analyzer.calculate_sentiment(
+            btc_dominance=btc_dominance,
+            volatility_pct=volatility,
+            rsi_daily=rsi_value,
+            volume_ratio=volume_ratio,
+            market_phase=strat.current_regime,
+            atr_history=strat.data_1m
+        )
+        
+        log.info(f"📊 {sentiment_analyzer.get_sentiment_message(sentiment_data)}")
+        
+        # 3. Determina regime (COLD, LATERAL, NORMAL, HOT)
+        regime = strat.current_regime
+        regime_params = {
+            "COLD": strat.regime_params_cold,
+            "LATERAL": strat.regime_params_lateral,
+            "NORMAL": strat.regime_params_normal,
+            "HOT": strat.regime_params_hot,
+        }.get(regime, strat.regime_params_normal)
+        
+        # 4. Leverage baseado no regime + sentimento
+        base_leverage = int(regime_params.get("leverage", 10.0))
+        sentiment_mult = sentiment_data['leverage_multiplier']
+        lev = max(1, int(base_leverage * sentiment_mult))
+        
+        # 5. SL FIXO baseado em ATR multiplier (não dinâmico)
+        atr_mult = regime_params.get("atr_multiplier_sl", 1.8)
         dist_sl = (atr / price) * atr_mult
         sl = price * (1 - dist_sl) if side == "Buy" else price * (1 + dist_sl)
         
-        # 3. TP Dinâmico baseado em Regime + Volatilidade + ADX
-        # Obter ATR% e ADX da estratégia se disponível
-        ind = {}
-        try:
-            ind = strat.calculate_indicators(strat.data_1m.tail(100), strat.data_15m.tail(250)) if hasattr(strat, 'data_1m') else {}
-        except:
-            ind = {}
+        # 6. Calcular quantity com risco máximo 2%
+        qty = risk_mgr.get_dynamic_risk_params(price, sl, cache_balance['total'])[1]
         
-        atr_pct = ind.get('atr_pct', 0.0015)  # Default: 0.15%
-        adx = ind.get('adx_1m', 22)  # Default: 22
-        tp_dinamic = risk_mgr.calculate_dynamic_tp(price, side, atr_pct, adx, regime=regime)
+        # 7. CASCATA DE TPS (3 níveis)
+        strat.tp_cascade = TPCascadeManager(
+            symbol=symbol,
+            side="LONG" if side == "Buy" else "SHORT",
+            entry=price,
+            initial_sl=sl,
+            account_balance=cache_balance['total'],
+            leverage=lev
+        )
+        strat.tp_cascade.calculate_scalp_tps(market_volatility=regime)
+        
+        # 8. Usar TP1 para a ordem (será gerenciado em cascata)
+        tp1_price = strat.tp_cascade.tp_levels[0].tp_price
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
 
         prepare_leverage(symbol, lev)
         
-        # 4. Envio da Ordem
+        # 9. Envio da Ordem com SL fixo e TP1 da cascata
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 
-            takeProfit=str(round(tp_dinamic, p_prec)), 
+            takeProfit=str(round(tp1_price, p_prec)), 
             stopLoss=str(round(sl, p_prec)),
             tpOrderType="Market", slOrderType="Market", tpslMode="Full"
         )
@@ -223,30 +244,42 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.current_qty = float(qty)
             strat.partial_taken = False
             
-            # 🎯 ESTRATÉGIA 1: Setup SMC com Fibonacci Targets
-            try:
-                swing_high = ind.get('swing_high', price * 1.02)
-                swing_low = ind.get('swing_low', price * 0.98)
-                executor.setup_smc_management_with_fibonacci(
-                    symbol, signal, price, atr, 
-                    swing_high=swing_high, 
-                    swing_low=swing_low
-                )
-            except Exception as e:
-                log.warning(f"⚠️ Fibonacci setup falhou para {symbol}: {e}")
-                # Fallback: usar setup SMC normal
-                executor.setup_smc_management(symbol, signal, price, sl, tp_dinamic * 0.618, tp_dinamic * 0.809, tp_dinamic)
+            # Log dos 3 TPs
+            tp1 = strat.tp_cascade.tp_levels[0].tp_price
+            tp2 = strat.tp_cascade.tp_levels[1].tp_price
+            tp3 = strat.tp_cascade.tp_levels[2].tp_price
             
-            tp_pct = abs((tp_dinamic - price) / price) * 100
-            notifier.send_message(f"🚀 *{symbol} {side}* | {lev}x | Qty: {qty_str}\n🛡️ SL: {round(sl, p_prec)} | 🎯 TP: {round(tp_dinamic, p_prec)} (DYN: +{tp_pct:.1f}%)")
+            tp1_pct = abs((tp1 - price) / price) * 100
             
-            # ⭐ Enviar score de indicadores no Telegram
-            score_msg = strat.get_score_message()
-            if score_msg and score_msg != "Nenhum score calculado":
-                notifier.send_message(score_msg)
+            # Notificação Mack com sentimento
+            score_info = strat.last_score_result or {"score": 0, "total_indicators": 0}
+            strength = min(float(score_info.get("score", 0)) / float(score_info.get("total_indicators", 1)), 1.0)
             
+            notifier.notify_signal_mack(
+                symbol=symbol,
+                side=side.upper(),
+                entry=price,
+                sl=sl,
+                tp=tp1,  # TP1 como principal
+                leverage=lev,
+                profile=sentiment_data['profile'],  # Profile baseado em sentimento
+                strength=strength,
+                rationale=[
+                    f"[SENTIMENT] {sentiment_data['emoji']} {sentiment_data['emotion']}",
+                    f"[REGIME] {regime}",
+                    f"[SCORE] {score_info.get('score', 0)}/{score_info.get('total_indicators', 0)}"
+                ],
+                partials=[
+                    {"tp": tp1, "percent": 50, "action": "CLOSE_PARTIAL", "desc": "TP1"},
+                    {"tp": tp2, "percent": 30, "action": "CLOSE_PARTIAL", "desc": "TP2"},
+                    {"tp": tp3, "percent": 20, "action": "CLOSE_FINAL", "desc": "TP3"},
+                ]
+            )
+            
+            # Enviar mensagem de sentimento
+            notifier.send_message(sentiment_analyzer.get_sentiment_message(sentiment_data))
     except Exception as e:
-        log.error(f"Erro abertura {symbol}: {e}")
+        log.error(f"Erro na abertura de {symbol}: {e}")
 
 # ... (Mantenha as demais funções: execute_partial_tp, update_remote_sl, get_market_sentiment, get_cached_data, etc., conforme seu código original)
 
@@ -328,6 +361,8 @@ def get_cached_data(force=False):
                             "avail": avail, 
                             "last_update": now
                         }
+                        # 💰 Sincronizar balance com RiskManager
+                        risk_mgr.update_compliance(total)
             
             # 2. Busca Posições
             p_resp = session.get_positions(category="linear", settleCoin="USDT")
@@ -360,16 +395,10 @@ def check_closed_trades():
                 ULTIMO_ORDER_ID_PROCESSADO = order_id
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
-def sync_historical_pnl(risk_mgr):
-    """Sincroniza histórico de PnL desde o reset_timestamp ou 18/03 como fallback."""
+def sync_historical_pnl():
     try:
-        # Determina a data de início (reset_timestamp ou 18/03)
-        if risk_mgr.reset_timestamp:
-            start_ts = int(risk_mgr.reset_timestamp.timestamp() * 1000)
-            start_date_display = risk_mgr.reset_timestamp.strftime("%Y-%m-%d")
-        else:
-            start_date_display = "2026-03-18"
-            start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d").timestamp() * 1000)
+        start_date_display = "2026-04-13"
+        start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d").timestamp() * 1000)
         
         processed_orders = set()
         log.info(f"🔄 Sincronizando histórico PnL desde {start_date_display} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
@@ -386,7 +415,6 @@ def sync_historical_pnl(risk_mgr):
                         pnl_liquido = pnl_bruto - fees
                         risk_mgr.stats['total_trades'] += 1
                         if pnl_liquido > 0: risk_mgr.stats['wins'] += 1
-                        elif pnl_liquido > -0.15: risk_mgr.stats['protected'] = risk_mgr.stats.get('protected', 0) + 1
                         else: risk_mgr.stats['losses'] += 1
                         risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
                         risk_mgr.total_pnl_bruto += pnl_bruto
@@ -524,15 +552,7 @@ def debug_sanity_check():
         if not strat: continue
         log.info(f"{symbol}: Invert={getattr(strat, 'invert_signal', False)} | ATR={getattr(strat, 'atr_multiplier_sl', 1.8)}")
 
-if __name__ == "__main__":
-    # Resetar stats de performance (WR check removido)
-    risk_mgr.stats = {
-        'wins': 0,
-        'losses': 0,
-        'protected': 0,
-        'total_trades': 0,
-        'pnl_history': {}
-    }
+if __name__ == "__main__": 
     log.info("📥 Warm-up Inicial...")
     log.info("✅ Stats resetados - WR check desativado")
     for symbol in SYMBOLS:
@@ -546,6 +566,6 @@ if __name__ == "__main__":
     sync_open_positions()
     Thread(target=process_queue, daemon=True).start()
     ws = create_and_subscribe_websocket()
-    sync_historical_pnl(risk_mgr)
+    sync_historical_pnl()
     debug_sanity_check()
     start_bot()

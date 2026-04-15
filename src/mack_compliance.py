@@ -1,7 +1,7 @@
 # src/mack_compliance.py
 """
 Compliance com as 5 regras do Mack para trading disciplinado
-- Regra 1: Risco:Retorno 1:2
+- Regra 1: Risco:Retorno 1:3
 - Regra 2: SL imóvel em prejuízo
 - Regra 3: Sem aumentar posição no desespero
 - Regra 4: Dimensionamento correto
@@ -15,10 +15,6 @@ from datetime import datetime, timezone, timedelta
 log = logging.getLogger(__name__)
 
 class MackCompliance:
-    """
-    Valida e audita conformidade com regras do Mack
-    """
-    
     def __init__(self, account_balance: float = 1000.0):
         self.account_balance = account_balance
         self.max_risk_per_trade = 0.02  # 2% máximo por trade
@@ -30,7 +26,7 @@ class MackCompliance:
         self.violations = []
     
     # ========================================================
-    # REGRA 1: RISCO:RETORNO 1:2 MÍNIMO
+    # REGRA 1: RISCO:RETORNO 1:3 MÍNIMO
     # ========================================================
     
     def validate_rr_ratio(
@@ -41,13 +37,6 @@ class MackCompliance:
         side: str,
         symbol: str = ""
     ) -> Dict:
-        """
-        Valida que reward é pelo menos 2x o risk
-        
-        LONG: risk = entry - sl, reward = tp - entry
-        SHORT: risk = sl - entry, reward = entry - tp
-        """
-        
         if side == "LONG":
             risk = entry - sl
             reward = tp - entry
@@ -64,14 +53,14 @@ class MackCompliance:
             return {"valid": False, "error": "TP no lado errado", "reward": reward}
         
         ratio = reward / risk
-        is_valid = ratio >= 1.99  # Mínimo 1:2 (com pequena margem)
+        is_valid = ratio >= 2.99  # Mínimo 1:3 (com pequena margem)
         
         audit_msg = f"[R:R] {symbol} {side} | Ratio: {ratio:.2f}:1 {'✅' if is_valid else '❌'}"
         self.audit_log.append(audit_msg)
         log.info(audit_msg)
         
         if not is_valid:
-            violation = f"REGRA 1 VIOLADA: {symbol} Risk:Reward {ratio:.2f}:1 (mínimo 1:2)"
+            violation = f"REGRA 1 VIOLADA: {symbol} Risk:Reward {ratio:.2f}:1 (mínimo 1:3)"
             self.violations.append(violation)
             log.warning(f"⚠️ {violation}")
         
@@ -80,7 +69,7 @@ class MackCompliance:
             "ratio": round(ratio, 2),
             "risk_points": risk,
             "reward_points": reward,
-            "min_required": "1:2"
+            "min_required": "1:3"
         }
     
     # ========================================================
@@ -96,14 +85,6 @@ class MackCompliance:
         side: str,
         current_pnl: float
     ) -> Dict:
-        """
-        Audita movimentação do SL
-        
-        ❌ PROIBIDO: Mover SL contra você (aumentar risco) em prejuízo
-        ✅ PERMITIDO: Mover SL para BE (entrada) quando lucrativo
-        ✅ PERMITIDO: Mover SL para lucro quando acima do TP1
-        """
-        
         is_losing = current_pnl < 0
         sl_changed = sl_current != sl_original
         
@@ -146,13 +127,6 @@ class MackCompliance:
         total_pnl: float,
         is_losing: bool
     ) -> Dict:
-        """
-        Detecta averaging down (pirâmide invertida)
-        
-        ❌ PROIBIDO: Adicionar mais capital quando a posição está perdendo
-        ✅ PERMITIDO: Aumentar posição apenas com sinal confirmado
-        """
-        
         averaging_down_detected = is_losing and recent_additions > 0
         
         audit_msg = f"[AV-DOWN] {symbol} | Adições recentes: {recent_additions} | Perdendo: {is_losing}"
@@ -186,12 +160,6 @@ class MackCompliance:
         account_balance: float,
         side: str
     ) -> Dict:
-        """
-        Valida que a posição está dimensionada confortavelmente
-        
-        Conforto = você não fica ansioso com a posição
-        Max Risk = 2% por trade máximo
-        """
         
         # Calcular risco em USD
         if side == "LONG":
@@ -232,13 +200,6 @@ class MackCompliance:
         entry_time: datetime,
         plan: Dict
     ) -> Dict:
-        """
-        Valida execução sem emoção
-        
-        ✅ Saiu no TP planejado
-        ✅ Saiu no SL planejado
-        ❌ Saiu no pânico (antes do SL/TP)
-        """
         
         exit_plan = plan.get("tps", [])
         exit_method = plan.get("exit_method", "unknown")
@@ -266,8 +227,6 @@ class MackCompliance:
     # ========================================================
     
     def get_compliance_report(self) -> Dict:
-        """Relatório completo de compliance"""
-        
         report = {
             "timestamp": datetime.now(timezone(timedelta(hours=-3))).isoformat(),
             "total_violations": len(self.violations),
@@ -283,22 +242,8 @@ class MackCompliance:
         violation = f"REGRA {rule_number} VIOLADA: {symbol} - {message}"
         self.violations.append(violation)
         log.error(f"❌ {violation}")
-    
-    def clear_daily_violations(self):
-        """Limpa violações do dia anterior (reset diário)"""
-        self.violations.clear()
-        self.audit_log.clear()
-        self.daily_loss_accumulated = 0.0
-        log.info("🔄 Violações do dia anterior limpas")
-
 
 class PositionSizer:
-    """
-    Calcula tamanho de posição de forma profissional (Mack-compliant)
-    
-    Fórmula: Qty = (Account * RiskPercent) / (Risk em pontos * Preço unitário)
-    """
-    
     @staticmethod
     def calculate_qty(
         account_balance: float,
@@ -307,19 +252,6 @@ class PositionSizer:
         risk_percent: float = 0.02,  # 2% padrão
         side: str = "LONG"
     ) -> float:
-        """
-        CalcCalcula quantidade Mack-compliant
-        
-        Args:
-            account_balance: Saldo da conta
-            entry_price: Preço de entrada
-            sl_price: Preço de stop loss
-            risk_percent: Percentual de risco (default 2%)
-            side: LONG ou SHORT
-        
-        Returns:
-            Quantidade a ser tradada
-        """
         
         if side == "LONG":
             risk_per_unit = entry_price - sl_price

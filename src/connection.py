@@ -25,7 +25,6 @@ def handle_message(message):
     print(f"Novo preço: {data[0]['close']}")
 
 def get_websocket_session(testnet=False):
-    # Usamos a mesma lógica de segurança do privado
     p_int, p_out, ret = _safe_ws_ping_config("PUBLIC_WS") 
     return WebSocket(
         testnet=testnet,
@@ -37,7 +36,6 @@ def get_websocket_session(testnet=False):
     )
 
 def get_private_websocket_session(api_key, api_secret, testnet=False, demo=False):
-    """WebSocket privado (ordens, posições) — suporta demo=True."""
     ping_interval, ping_timeout, retries = _safe_ws_ping_config("PRIVATE_WS")
 
     return WebSocket(
@@ -46,9 +44,8 @@ def get_private_websocket_session(api_key, api_secret, testnet=False, demo=False
         api_key=api_key,
         api_secret=api_secret,
         channel_type="private",
-        # Parâmetros de resiliência:
         ping_interval=ping_interval,
         ping_timeout=ping_timeout,
         retries=retries,
-        restart_on_error=True # Tenta reiniciar a thread se der erro
+        restart_on_error=True
     )
