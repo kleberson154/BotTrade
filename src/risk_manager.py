@@ -77,7 +77,12 @@ class RiskManager:
         win_rate = (wins / total * 100) if total > 0 else 0
         pnl_net = sum(self.stats["pnl_history"].values())
         
-        return total, wins, win_rate, pnl_net
+        # Calcula proteção (SL hits vs total) e taxa de sucesso
+        sl_hits = self.stats['exit_methods'].get('sl_hit', 0)
+        protection_rate = (sl_hits / total * 100) if total > 0 else 0
+        success_rate = win_rate  # Mesmo que win_rate (% de trades lucrativos)
+        
+        return total, wins, protection_rate, win_rate, success_rate, pnl_net
     
     def add_historical_trade(self, symbol, pnl_net):
         if symbol not in self.performance:
