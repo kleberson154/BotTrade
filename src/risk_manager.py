@@ -22,7 +22,10 @@ class RiskManager:
         self.trades_history = []
         self.performance = {}  # Rastreamento de performance por moeda
         
-        # 💰 Balance sincronizado com Bybit
+        # � Timestamp de reset dos stats
+        self.reset_date_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # �💰 Balance sincronizado com Bybit
         self.account_balance = account_balance
         
         # 🆕 INTEGRAÇÃO MACK: 5 Regras de Trading Disciplinado
