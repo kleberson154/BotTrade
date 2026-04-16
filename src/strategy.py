@@ -67,7 +67,7 @@ class TradingStrategy:
         self.regime_params_normal = {
             "min_volatilidade_pct": 0.0012,  # ligeiramente relaxado (era 0.0014)
             "volume_multiplier": 1.4,        # um pouco menos rígido (era 1.6)
-            "min_adx": 25,                   # AUMENTADO para 25: filtra mercados laterais
+            "min_adx": 18,                   # REDUZIDO para 18: equilibra tendência com aproveitamento
             "atr_multiplier_sl": 1.8,
             "leverage": 10.0,
             "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
@@ -75,7 +75,7 @@ class TradingStrategy:
         self.regime_params_hot = {
             "min_volatilidade_pct": 0.0030,  # Base para HOT: ATR >= 0.3%
             "volume_multiplier": 2.0,        # x2.0 em volatilidade extrema
-            "min_adx": 25,                   # Requer tendência clara (sem pump de volatilidade pura)
+            "min_adx": 20,                   # REDUZIDO para 20: aproveita alta volatilidade
             "atr_multiplier_sl": 2.2,        # SL mais largo em volatilidade extrema
             "leverage": 12.0,                # Reduzido de 15 para 12 (segurança com 120 USDT banca)
             "require_volume_peak": True,     # Mantém volume requirement
@@ -250,7 +250,7 @@ class TradingStrategy:
             # Calcula também o momentum de volume (aceleração)
             vol_momentum = vol_recent / vol_avg5 if vol_avg5 > 0 else 1.0
             
-            results['volume_divergence_ok'] = vol_trend and vol_momentum > 0.95
+            results['volume_divergence_ok'] = vol_trend and vol_momentum > 0.50  # RELAXADO: 50% é suficiente
             results['volume_momentum'] = vol_momentum
         else:
             results['volume_divergence_ok'] = True  # Se dados insuficientes, permite
@@ -315,13 +315,13 @@ class TradingStrategy:
             avg_vol = self.data_1m['volume'].tail(20).mean()
 
             # ====== REJEIÇÃO 3: REGIME FRACO ======
-            if self.use_regime_filter and ind['regime_gap'] < 0.0015:
-                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.0015)"
+            if self.use_regime_filter and ind['regime_gap'] < 0.005:  # RELAXADO: 0.005 (era 0.0015 - muito rigoroso)
+                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.005)"
                 self._log_trade_decision(
                     "REJEITADO", "HOLD",
                     {
                         "reason": "Regime fraco - Mercado sem tendência clara",
-                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.0015 | Regime: {ind['market_regime']}"
+                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.005 | Regime: {ind['market_regime']}"
                     },
                     {
                         "adx": ind['adx_1m'],
@@ -771,8 +771,8 @@ class TradingStrategy:
     # =========================================================
     def is_market_safe(self, current_time=None):
         dt = datetime.datetime.now() if current_time is None else pd.Timestamp(current_time)
-        # Evita a "virada" de candle de 1h (alta volatilidade errática)
-        return not (dt.minute < 2 or dt.minute > 58)
+        # Evita apenas o minuto 00 (virada de hora com alta volatilidade)
+        return not (dt.minute == 0)  # RELAXADO: apenas bloqueia minuto 0 (era 0,1 e 59)
 
     def add_new_candle(self, timeframe, candle_data):
         target = self.candles_1m if timeframe == "1m" else self.candles_15m
