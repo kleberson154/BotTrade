@@ -127,6 +127,49 @@ class TradingStrategy:
             return float(val)
         except: return 0.0
 
+    def _log_trade_decision(self, status, signal, reason_details, indicators_dict=None):
+        """
+        Centraliza o logging estruturado de decisões de trade.
+        
+        Args:
+            status: "ACEITADO" ou "REJEITADO"
+            signal: "BUY", "SELL", "HOLD"
+            reason_details: dict com detalhes da rejeição/aceitação
+            indicators_dict: dict com valores de indicadores
+        """
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Construir mensagem estruturada
+        if status == "ACEITADO":
+            emoji = "✅"
+            log_level = log.info
+        else:
+            emoji = "🚫"
+            log_level = log.warning
+        
+        # Linha principal
+        main_msg = f"{emoji} [{self.symbol}] {status}: {signal}"
+        log_level(main_msg)
+        
+        # Detalhes estruturados
+        reason_msg = f"   Motivo: {reason_details.get('reason', 'N/A')}"
+        log_level(reason_msg)
+        
+        if reason_details.get('details'):
+            detail_msg = f"   Detalhes: {reason_details['details']}"
+            log_level(detail_msg)
+        
+        # Indicadores (se fornecido)
+        if indicators_dict:
+            ind_msg = (
+                f"   Indicadores: "
+                f"ADX={indicators_dict.get('adx', 0):.1f} | "
+                f"RSI={indicators_dict.get('rsi', 0):.1f} | "
+                f"ATR%={indicators_dict.get('atr_pct', 0):.4f} | "
+                f"Vol={indicators_dict.get('vol', 0):.2f}"
+            )
+            log_level(ind_msg)
+
     def detect_market_regime(self, df_1m):
         """Detecta regime de mercado baseado em ATR e ADX."""
         if len(df_1m) < 30:
@@ -240,11 +283,28 @@ class TradingStrategy:
             self._sync_dataframes()
             self.last_hold_reason = "avaliando"
             
+            # ====== REJEIÇÃO 1: PROTEÇÃO DE HORÁRIO ======
             if not self.is_market_safe(current_time):
                 self.last_hold_reason = "protecao virada de hora (minuto 00/01/59)"
+                self._log_trade_decision(
+                    "REJEITADO", "HOLD",
+                    {
+                        "reason": "Proteção de virada de hora (volatilidade errática)",
+                        "details": f"Horário atual em minuto 00/01/59 não permitido"
+                    }
+                )
                 return "HOLD", 0
+            
+            # ====== REJEIÇÃO 2: DADOS INSUFICIENTES ======
             if len(self.data_1m) < 40 or len(self.data_15m) < self.min_15m_candles:
                 self.last_hold_reason = f"dados insuficientes 1m={len(self.data_1m)} 15m={len(self.data_15m)}"
+                self._log_trade_decision(
+                    "REJEITADO", "HOLD",
+                    {
+                        "reason": "Dados insuficientes para análise",
+                        "details": f"Candles disponíveis: 1m={len(self.data_1m)}/40 | 15m={len(self.data_15m)}/{self.min_15m_candles}"
+                    }
+                )
                 return "HOLD", 0
 
             # 1. Preparação de Dados e Indicadores
@@ -254,9 +314,22 @@ class TradingStrategy:
             curr_vol = self.data_1m['volume'].iloc[-1]
             avg_vol = self.data_1m['volume'].tail(20).mean()
 
-            # 2. Filtro de Regime (Evita mercados "mortos")
+            # ====== REJEIÇÃO 3: REGIME FRACO ======
             if self.use_regime_filter and ind['regime_gap'] < 0.0015:
                 self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.0015)"
+                self._log_trade_decision(
+                    "REJEITADO", "HOLD",
+                    {
+                        "reason": "Regime fraco - Mercado sem tendência clara",
+                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.0015 | Regime: {ind['market_regime']}"
+                    },
+                    {
+                        "adx": ind['adx_1m'],
+                        "rsi": ind['rsi_1m'],
+                        "atr_pct": ind['atr_pct'],
+                        "vol": curr_vol
+                    }
+                )
                 return "HOLD", 0
 
             # 3. Lógica de Decisão (Regime-Aware)
@@ -288,7 +361,35 @@ class TradingStrategy:
                 # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
 
-            if tendencia_forte and volat_ok and pico_vol and volume_confirmado:
+            # ====== REJEIÇÃO 4: INDICADORES INSUFICIENTES ======
+            if not (tendencia_forte and volat_ok and pico_vol and volume_confirmado):
+                motivos_rejeicao = []
+                if not tendencia_forte:
+                    motivos_rejeicao.append(f"ADX={ind['adx_1m']:.1f} (mín: {adjusted_min_adx:.1f})")
+                if not volat_ok:
+                    motivos_rejeicao.append(f"ATR%={ind['atr_pct']:.4f} (mín: {self.min_volatilidade_pct})")
+                if not pico_vol:
+                    motivos_rejeicao.append(f"Vol={curr_vol:.2f} (mín: {avg_vol*adjusted_volume_multiplier:.2f})")
+                if not volume_confirmado:
+                    vol_momentum = ind.get('volume_momentum', 1.0)
+                    motivos_rejeicao.append(f"Vol.momentum={vol_momentum:.2f} (divergência negativa)")
+                
+                self.last_hold_reason = " | ".join(motivos_rejeicao)
+                
+                self._log_trade_decision(
+                    "REJEITADO", "HOLD",
+                    {
+                        "reason": "Indicadores insuficientes",
+                        "details": " | ".join(motivos_rejeicao)
+                    },
+                    {
+                        "adx": ind['adx_1m'],
+                        "rsi": rsi,
+                        "atr_pct": ind['atr_pct'],
+                        "vol": curr_vol
+                    }
+                )
+                return "HOLD", 0
                 # M15 Context
                 m15_last = self.data_15m.iloc[-1]
                 m15_is_green = m15_last['close'] > m15_last['open']
@@ -331,6 +432,21 @@ class TradingStrategy:
                         raw_signal = "BUY"
                         min_rec = self.data_1m['low'].tail(10).min()
                         dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
+                    else:
+                        # ====== REJEIÇÃO 5: RSI OVERBOUGHT ======
+                        self._log_trade_decision(
+                            "REJEITADO", "BUY",
+                            {
+                                "reason": "RSI indicando exaustão (Overbought)",
+                                "details": f"RSI={ind['rsi_1m']:.1f} >= {self.rsi_overbought} (preço pode reverter)"
+                            },
+                            {
+                                "adx": ind['adx_1m'],
+                                "rsi": ind['rsi_1m'],
+                                "atr_pct": ind['atr_pct'],
+                                "vol": curr_vol
+                            }
+                        )
 
                 # Condição de VENDA
                 elif is_clean_breakout_down and curr_price < ind['ema_200_15'] and m15_is_red:
@@ -338,14 +454,58 @@ class TradingStrategy:
                         raw_signal = "SELL"
                         max_rec = self.data_1m['high'].tail(10).max()
                         dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.015)
+                    else:
+                        # ====== REJEIÇÃO 6: RSI OVERSOLD ======
+                        self._log_trade_decision(
+                            "REJEITADO", "SELL",
+                            {
+                                "reason": "RSI indicando exaustão (Oversold)",
+                                "details": f"RSI={ind['rsi_1m']:.1f} <= {self.rsi_oversold} (preço pode reverter)"
+                            },
+                            {
+                                "adx": ind['adx_1m'],
+                                "rsi": ind['rsi_1m'],
+                                "atr_pct": ind['atr_pct'],
+                                "vol": curr_vol
+                            }
+                        )
 
             # 4. Filtros de Sentimento e Inversão
             final_signal = raw_signal
             if final_signal == "BUY" and (not self.allow_long or (market_sentiment == "BEARISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
                 self.last_hold_reason = f"bloqueado por sentimento/allow_long (sent={market_sentiment})"
+                # ====== REJEIÇÃO 7: SENTIMENTO BLOQUEANDO COMPRA ======
+                self._log_trade_decision(
+                    "REJEITADO", "BUY",
+                    {
+                        "reason": "Bloqueado por sentimento de mercado ou configuração",
+                        "details": f"Sentimento: {market_sentiment} | allow_long: {self.allow_long}"
+                    },
+                    {
+                        "adx": ind['adx_1m'],
+                        "rsi": ind['rsi_1m'],
+                        "atr_pct": ind['atr_pct'],
+                        "vol": curr_vol
+                    }
+                )
                 final_signal = "HOLD"
+                
             if final_signal == "SELL" and (not self.allow_short or (market_sentiment == "BULLISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
                 self.last_hold_reason = f"bloqueado por sentimento/allow_short (sent={market_sentiment})"
+                # ====== REJEIÇÃO 8: SENTIMENTO BLOQUEANDO VENDA ======
+                self._log_trade_decision(
+                    "REJEITADO", "SELL",
+                    {
+                        "reason": "Bloqueado por sentimento de mercado ou configuração",
+                        "details": f"Sentimento: {market_sentiment} | allow_short: {self.allow_short}"
+                    },
+                    {
+                        "adx": ind['adx_1m'],
+                        "rsi": ind['rsi_1m'],
+                        "atr_pct": ind['atr_pct'],
+                        "vol": curr_vol
+                    }
+                )
                 final_signal = "HOLD"
 
             if final_signal != "HOLD" and self.invert_signal:
@@ -397,10 +557,19 @@ class TradingStrategy:
                 )
                 
                 if not validate_result['valid']:
-                    # RR violada, rejeitar sinal
-                    log.warning(
-                        f"🚫 [{self.symbol}] Sinal {final_signal} REJEITADO: "
-                        f"RR {validate_result['ratio']}:1 < 1:2 (Mack Rule #1)"
+                    # ====== REJEIÇÃO 9: RR VIOLADA ======
+                    self._log_trade_decision(
+                        "REJEITADO", final_signal,
+                        {
+                            "reason": "Razão Risk:Reward insuficiente (Mack Rule #1)",
+                            "details": f"RR encontrada: {validate_result['ratio']}:1 | Mínimo exigido: 1:2"
+                        },
+                        {
+                            "adx": ind['adx_1m'],
+                            "rsi": ind['rsi_1m'],
+                            "atr_pct": ind['atr_pct'],
+                            "vol": curr_vol
+                        }
                     )
                     final_signal = "HOLD"
                     self.last_hold_reason = f"RR violada: {validate_result['ratio']}:1 < 1:2"
@@ -416,10 +585,20 @@ class TradingStrategy:
                     self.last_score_result = score_result
                     
                     if not score_result["triggered"]:
-                        # Score insuficiente
-                        log.warning(
-                            f"⚠️ [{self.symbol}] Score insuficiente: {score_result['score']}/{score_result['total_indicators']} "
-                            f"(min: {score_result['min_required']})"
+                        # ====== REJEIÇÃO 10: SCORE INSUFICIENTE ======
+                        self._log_trade_decision(
+                            "REJEITADO", final_signal,
+                            {
+                                "reason": "Score de indicadores insuficiente",
+                                "details": f"Score: {score_result['score']}/{score_result['total_indicators']} | "
+                                          f"Mínimo exigido: {score_result['min_required']}"
+                            },
+                            {
+                                "adx": ind['adx_1m'],
+                                "rsi": ind['rsi_1m'],
+                                "atr_pct": ind['atr_pct'],
+                                "vol": curr_vol
+                            }
                         )
                         final_signal = "HOLD"
                         self.last_hold_reason = f"Score: {score_result['score']}/{score_result['total_indicators']} " \
@@ -461,9 +640,22 @@ class TradingStrategy:
                             )
                             
                             if not leverage_ok:
+                                # ====== REJEIÇÃO 11: LEVERAGE EXCEDIDO ======
+                                self._log_trade_decision(
+                                    "REJEITADO", final_signal,
+                                    {
+                                        "reason": "Alavancagem excedida (>10x com 2% risk)",
+                                        "details": f"Qty calculada: {qty:.4f} | Saldo: ${self.account_balance:.2f}"
+                                    },
+                                    {
+                                        "adx": ind['adx_1m'],
+                                        "rsi": ind['rsi_1m'],
+                                        "atr_pct": ind['atr_pct'],
+                                        "vol": curr_vol
+                                    }
+                                )
                                 final_signal = "HOLD"
                                 self.last_hold_reason = "Leverage excedido (>10x) com 2% risk"
-                                log.warning(f"⚠️ [{self.symbol}] Alavancagem excedida")
                             else:
                                 # 5. Criar TradeSignal (com TP1 como referência)
                                 tp1_price = self.tp_cascade.tp_levels[0].tp_price
@@ -489,19 +681,47 @@ class TradingStrategy:
                                     atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
                                 )
                                 
-                                log.info(
-                                    f"✅ [{self.symbol}] TradeSignal criado (novo TP Cascade):\n"
-                                    f"  Sinal: {final_signal} @ {curr_price:.8f}\n"
-                                    f"  Qty: {qty:.4f}\n"
-                                    f"  SL: {sl_price:.8f}\n"
-                                    f"  TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
-                                    f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
-                                    f"{self.tp_cascade.tp_levels[2].tp_price:.8f}\n"
-                                    f"  RR: {validate_result['ratio']}:1 | Risk: 2% (${self.account_balance*0.02:.2f}) | "
-                                    f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f})"
+                                # ✅ ====== TRADE ACEITO ======
+                                self._log_trade_decision(
+                                    "ACEITADO", final_signal,
+                                    {
+                                        "reason": "Todos os critérios validados com sucesso",
+                                        "details": (
+                                            f"Entry: ${curr_price:.8f} | "
+                                            f"SL: ${sl_price:.8f} | "
+                                            f"TP1/TP2/TP3: ${self.tp_cascade.tp_levels[0].tp_price:.8f} / "
+                                            f"${self.tp_cascade.tp_levels[1].tp_price:.8f} / "
+                                            f"${self.tp_cascade.tp_levels[2].tp_price:.8f} | "
+                                            f"Qty: {qty:.4f} | "
+                                            f"RR: {validate_result['ratio']}:1 | "
+                                            f"Score: {score_result['score']}/{score_result['total_indicators']} | "
+                                            f"Regime: {self.current_regime} | "
+                                            f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f}%)"
+                                        )
+                                    },
+                                    {
+                                        "adx": ind['adx_1m'],
+                                        "rsi": ind['rsi_1m'],
+                                        "atr_pct": ind['atr_pct'],
+                                        "vol": curr_vol
+                                    }
                                 )
                         
                         except Exception as e:
+                            # ====== REJEIÇÃO 12: ERRO NO SETUP ======
+                            self._log_trade_decision(
+                                "REJEITADO", final_signal,
+                                {
+                                    "reason": f"Erro ao configurar posição",
+                                    "details": f"Erro: {str(e)[:100]}"
+                                },
+                                {
+                                    "adx": ind['adx_1m'],
+                                    "rsi": ind['rsi_1m'],
+                                    "atr_pct": ind['atr_pct'],
+                                    "vol": curr_vol
+                                }
+                            )
                             log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
                             final_signal = "HOLD"
                             self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
