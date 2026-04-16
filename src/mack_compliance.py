@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 class MackCompliance:
     def __init__(self, account_balance: float = 1000.0):
         self.account_balance = account_balance
-        self.max_risk_per_trade = 0.02  # 2% máximo por trade
-        self.max_daily_risk = 0.05      # 5% máximo por dia
+        self.max_risk_per_trade = 0.20  # 2% máximo por trade
+        self.max_daily_risk = 0.55      # 5% máximo por dia
         self.daily_loss_accumulated = 0.0
         
         # Auditoria

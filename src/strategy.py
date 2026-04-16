@@ -40,7 +40,7 @@ class TradingStrategy:
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
         # Cascata de TPs (não mais TRAILING STOP)
-        self.use_regime_filter = False      # Desativado - Modo Agressivo (+40% entradas)
+        self.use_regime_filter = True      # Desativado - Modo Agressivo (+40% entradas)
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
