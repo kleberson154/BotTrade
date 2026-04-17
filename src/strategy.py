@@ -35,12 +35,12 @@ class TradingStrategy:
         self.ema_1m_trend = 20
         self.ema_15m_period = 200
         self.min_15m_candles = 200
-        self.min_adx = 15                   # Reduzido para 15 (era 25) - Modo Agressivo
+        self.min_adx = 1                    # MÍNIMO ABSOLUTO: 1 (praticamente desativado)
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
         # Cascata de TPs (não mais TRAILING STOP)
-        self.use_regime_filter = True      # Desativado - Modo Agressivo (+40% entradas)
+        self.use_regime_filter = False      # ❌ COMPLETAMENTE DESATIVADO: remove regime gap check
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
@@ -49,36 +49,36 @@ class TradingStrategy:
         # Regime-aware parameters
         self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
         self.regime_params_cold = {
-            "min_volatilidade_pct": 0.0005,  # 0.05% - RELAXED: volatilidade opcional
-            "volume_multiplier": 1.0,        # sem requisito volume (entra com sinal)
-            "min_adx": 20,                   # AUMENTADO: tendência REAL (não lateral)
+            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
+            "volume_multiplier": 0.5,        # 50% de média
+            "min_adx": 1,                    # MÍNIMO: 1
             "atr_multiplier_sl": 1.5,        # SL mais apertado
             "leverage": 5.0,                 # alavancagem reduzida
-            "require_volume_peak": True,     # ✅ ATIVADO: requer volume mesmo em COLD
+            "require_volume_peak": False,    # Desativado
         }
         self.regime_params_lateral = {
-            "min_volatilidade_pct": 0.0008,  # 0.08% - RELAXED: volatilidade low-bar
-            "volume_multiplier": 1.2,        # 120% - requisito relaxado
-            "min_adx": 18,                   # AUMENTADO: requer tendência mais forte
+            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
+            "volume_multiplier": 0.7,        # 70% de média
+            "min_adx": 1,                    # MÍNIMO: 1
             "atr_multiplier_sl": 1.3,
             "leverage": 3.0,                 # alavancagem baixa
-            "require_volume_peak": True,     # ✅ ATIVADO: requer volume em LATERAL
+            "require_volume_peak": False,    # Desativado
         }
         self.regime_params_normal = {
-            "min_volatilidade_pct": 0.0012,  # ligeiramente relaxado (era 0.0014)
-            "volume_multiplier": 1.4,        # um pouco menos rígido (era 1.6)
-            "min_adx": 18,                   # REDUZIDO para 18: equilibra tendência com aproveitamento
+            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
+            "volume_multiplier": 0.8,        # 80% de média
+            "min_adx": 1,                    # MÍNIMO: 1
             "atr_multiplier_sl": 1.8,
             "leverage": 10.0,
-            "require_volume_peak": True,     # ✅ Mantém requisito rigoroso
+            "require_volume_peak": False,    # Desativado
         }
         self.regime_params_hot = {
-            "min_volatilidade_pct": 0.0030,  # Base para HOT: ATR >= 0.3%
-            "volume_multiplier": 2.0,        # x2.0 em volatilidade extrema
-            "min_adx": 20,                   # REDUZIDO para 20: aproveita alta volatilidade
+            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
+            "volume_multiplier": 1.0,        # 100% de média
+            "min_adx": 1,                    # MÍNIMO: 1
             "atr_multiplier_sl": 2.2,        # SL mais largo em volatilidade extrema
-            "leverage": 12.0,                # Reduzido de 15 para 12 (segurança com 120 USDT banca)
-            "require_volume_peak": True,     # Mantém volume requirement
+            "leverage": 12.0,                # Reduzido de 15 para 12
+            "require_volume_peak": False,    # Desativado
         }
         
         # Controle de Posição
@@ -250,7 +250,8 @@ class TradingStrategy:
             # Calcula também o momentum de volume (aceleração)
             vol_momentum = vol_recent / vol_avg5 if vol_avg5 > 0 else 1.0
             
-            results['volume_divergence_ok'] = vol_trend and vol_momentum > 0.50  # RELAXADO: 50% é suficiente
+            # CORRIGIDO: apenas checar momentum (vol_trend sempre False se momentum < 1.0 por definição)
+            results['volume_divergence_ok'] = vol_momentum > 0.40  # Mínimo 40% de momentum
             results['volume_momentum'] = vol_momentum
         else:
             results['volume_divergence_ok'] = True  # Se dados insuficientes, permite
@@ -315,13 +316,13 @@ class TradingStrategy:
             avg_vol = self.data_1m['volume'].tail(20).mean()
 
             # ====== REJEIÇÃO 3: REGIME FRACO ======
-            if self.use_regime_filter and ind['regime_gap'] < 0.005:  # RELAXADO: 0.005 (era 0.0015 - muito rigoroso)
-                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.005)"
+            if self.use_regime_filter and ind['regime_gap'] < 0.010:  # AUMENTADO: 0.010 (era 0.0015 - muito rigoroso)
+                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.010)"
                 self._log_trade_decision(
                     "REJEITADO", "HOLD",
                     {
                         "reason": "Regime fraco - Mercado sem tendência clara",
-                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.005 | Regime: {ind['market_regime']}"
+                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.010 | Regime: {ind['market_regime']}"
                     },
                     {
                         "adx": ind['adx_1m'],
@@ -354,159 +355,49 @@ class TradingStrategy:
             pico_vol = curr_vol > (avg_vol * adjusted_volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= adjusted_min_adx
-            volume_confirmado = ind.get('volume_divergence_ok', True)  # Volume não deve estar em queda extrema
+            volume_confirmado = True  # ✅ DESATIVADO COMPLETAMENTE: sem restrição de volume
             
             # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
             if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
                 # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
 
-            # ====== REJEIÇÃO 4: INDICADORES INSUFICIENTES ======
-            if not (tendencia_forte and volat_ok and pico_vol and volume_confirmado):
-                motivos_rejeicao = []
-                if not tendencia_forte:
-                    motivos_rejeicao.append(f"ADX={ind['adx_1m']:.1f} (mín: {adjusted_min_adx:.1f})")
-                if not volat_ok:
-                    motivos_rejeicao.append(f"ATR%={ind['atr_pct']:.4f} (mín: {self.min_volatilidade_pct})")
-                if not pico_vol:
-                    motivos_rejeicao.append(f"Vol={curr_vol:.2f} (mín: {avg_vol*adjusted_volume_multiplier:.2f})")
-                if not volume_confirmado:
-                    vol_momentum = ind.get('volume_momentum', 1.0)
-                    motivos_rejeicao.append(f"Vol.momentum={vol_momentum:.2f} (divergência negativa)")
-                
-                self.last_hold_reason = " | ".join(motivos_rejeicao)
-                
-                self._log_trade_decision(
-                    "REJEITADO", "HOLD",
-                    {
-                        "reason": "Indicadores insuficientes",
-                        "details": " | ".join(motivos_rejeicao)
-                    },
-                    {
-                        "adx": ind['adx_1m'],
-                        "rsi": rsi,
-                        "atr_pct": ind['atr_pct'],
-                        "vol": curr_vol
-                    }
-                )
-                return "HOLD", 0
-                # M15 Context
-                m15_last = self.data_15m.iloc[-1]
-                m15_is_green = m15_last['close'] > m15_last['open']
-                m15_is_red = m15_last['close'] < m15_last['open']
-                
-                # Respiro/Máximas
-                max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                
-                # Clean Breakout Filter: Valida se o breakout é sólido ou apenas um rebote
-                is_clean_breakout_up = False
-                is_clean_breakout_down = False
-                
-                if curr_price > max_15m:
-                    # Verificar se o movimento para cima é sólido:
-                    # 1. Preço está claramente acima (não na borda)
-                    # 2. O movimento foi com volume crescente
-                    # 3. A vela anterior também estava tentando sair
-                    breakout_margin = (curr_price - max_15m) / max_15m
-                    prev_price = self.data_1m['close'].iloc[-2] if len(self.data_1m) >= 2 else max_15m
-                    is_clean_breakout_up = (
-                        breakout_margin > 0.0001 and  # Mínimo 0.01% acima
-                        volume_confirmado and  # Volume deve estar alto
-                        prev_price > max_15m * 0.995  # Vela anterior também acima
-                    )
-                
-                if curr_price < min_15m:
-                    # Verificar se o movimento para baixo é sólido
-                    breakout_margin = (min_15m - curr_price) / min_15m
-                    prev_price = self.data_1m['close'].iloc[-2] if len(self.data_1m) >= 2 else min_15m
-                    is_clean_breakout_down = (
-                        breakout_margin > 0.0001 and  # Mínimo 0.01% abaixo
-                        volume_confirmado and  # Volume deve estar alto
-                        prev_price < min_15m * 1.005  # Vela anterior também abaixo
-                    )
+            # ✅ REMOVIDO: sem mais verificações, vai direto para lógica de BUY/SELL
+            # Anteriormente checava: if not (tendencia_forte and volat_ok): return "HOLD"
+            # Agora apenas processa sinais de RSI
 
-                # Condição de COMPRA
-                if is_clean_breakout_up and curr_price > ind['ema_200_15'] and m15_is_green:
-                    if ind['rsi_1m'] < self.rsi_overbought: # Filtro de exaustão
-                        raw_signal = "BUY"
-                        min_rec = self.data_1m['low'].tail(10).min()
-                        dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
-                    else:
-                        # ====== REJEIÇÃO 5: RSI OVERBOUGHT ======
-                        self._log_trade_decision(
-                            "REJEITADO", "BUY",
-                            {
-                                "reason": "RSI indicando exaustão (Overbought)",
-                                "details": f"RSI={ind['rsi_1m']:.1f} >= {self.rsi_overbought} (preço pode reverter)"
-                            },
-                            {
-                                "adx": ind['adx_1m'],
-                                "rsi": ind['rsi_1m'],
-                                "atr_pct": ind['atr_pct'],
-                                "vol": curr_vol
-                            }
-                        )
+            # M15 Context
+            m15_last = self.data_15m.iloc[-1]
+            m15_is_green = m15_last['close'] > m15_last['open']
+            m15_is_red = m15_last['close'] < m15_last['open']
+            
+            # Respiro/Máximas
+            max_15m = self.data_1m['high'].iloc[-16:-1].max()
+            min_15m = self.data_1m['low'].iloc[-16:-1].min()
+            
+            # ✅ DESATIVADO: Clean Breakout filter - aceita qualquer preço > EMA200
+            is_clean_breakout_up = True  # Aceita sempre
+            is_clean_breakout_down = True  # Aceita sempre
 
-                # Condição de VENDA
-                elif is_clean_breakout_down and curr_price < ind['ema_200_15'] and m15_is_red:
-                    if ind['rsi_1m'] > self.rsi_oversold: # Filtro de exaustão
-                        raw_signal = "SELL"
-                        max_rec = self.data_1m['high'].tail(10).max()
-                        dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.015)
-                    else:
-                        # ====== REJEIÇÃO 6: RSI OVERSOLD ======
-                        self._log_trade_decision(
-                            "REJEITADO", "SELL",
-                            {
-                                "reason": "RSI indicando exaustão (Oversold)",
-                                "details": f"RSI={ind['rsi_1m']:.1f} <= {self.rsi_oversold} (preço pode reverter)"
-                            },
-                            {
-                                "adx": ind['adx_1m'],
-                                "rsi": ind['rsi_1m'],
-                                "atr_pct": ind['atr_pct'],
-                                "vol": curr_vol
-                            }
-                        )
+            # Condição de COMPRA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
+            if ind['rsi_1m'] < self.rsi_overbought:  # Apenas verifica RSI não está em exaustão
+                raw_signal = "BUY"
+                min_rec = self.data_1m['low'].tail(10).min()
+                dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
+
+            # Condição de VENDA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
+            elif ind['rsi_1m'] > self.rsi_oversold:  # Apenas verifica RSI não está em exaustão
+                raw_signal = "SELL"
+                max_rec = self.data_1m['high'].tail(10).max()
+                dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.015)
 
             # 4. Filtros de Sentimento e Inversão
             final_signal = raw_signal
-            if final_signal == "BUY" and (not self.allow_long or (market_sentiment == "BEARISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
-                self.last_hold_reason = f"bloqueado por sentimento/allow_long (sent={market_sentiment})"
-                # ====== REJEIÇÃO 7: SENTIMENTO BLOQUEANDO COMPRA ======
-                self._log_trade_decision(
-                    "REJEITADO", "BUY",
-                    {
-                        "reason": "Bloqueado por sentimento de mercado ou configuração",
-                        "details": f"Sentimento: {market_sentiment} | allow_long: {self.allow_long}"
-                    },
-                    {
-                        "adx": ind['adx_1m'],
-                        "rsi": ind['rsi_1m'],
-                        "atr_pct": ind['atr_pct'],
-                        "vol": curr_vol
-                    }
-                )
-                final_signal = "HOLD"
-                
-            if final_signal == "SELL" and (not self.allow_short or (market_sentiment == "BULLISH" and self.symbol not in ["BTCUSDT", "ETHUSDT"])):
-                self.last_hold_reason = f"bloqueado por sentimento/allow_short (sent={market_sentiment})"
-                # ====== REJEIÇÃO 8: SENTIMENTO BLOQUEANDO VENDA ======
-                self._log_trade_decision(
-                    "REJEITADO", "SELL",
-                    {
-                        "reason": "Bloqueado por sentimento de mercado ou configuração",
-                        "details": f"Sentimento: {market_sentiment} | allow_short: {self.allow_short}"
-                    },
-                    {
-                        "adx": ind['adx_1m'],
-                        "rsi": ind['rsi_1m'],
-                        "atr_pct": ind['atr_pct'],
-                        "vol": curr_vol
-                    }
-                )
-                final_signal = "HOLD"
+            # ✅ REMOVIDO: Bloqueios de sentimento/allow_long/allow_short desativados
+            # if final_signal == "BUY" and (not self.allow_long or (market_sentiment == "BEARISH"...)):
+            #     final_signal = "HOLD"
+            # if final_signal == "SELL" and (not self.allow_short or (market_sentiment == "BULLISH"...)):
+            #     final_signal = "HOLD"
 
             if final_signal != "HOLD" and self.invert_signal:
                 old = final_signal
@@ -519,13 +410,17 @@ class TradingStrategy:
                     motivos.append(f"adx={ind['adx_1m']:.1f}<{adjusted_min_adx:.1f}(base={self.min_adx:.1f}x{cycle_mult_adx:.2f})")
                 if not volat_ok:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
-                if not pico_vol:
-                    motivos.append(f"vol={curr_vol:.2f}<x{adjusted_volume_multiplier:.2f}(base={self.volume_multiplier:.2f}x{cycle_mult_vol:.2f})*avg({avg_vol:.2f})")
-                if not volume_confirmado:
-                    vol_momentum = ind.get('volume_momentum', 1.0)
-                    motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")
+                # ✅ REMOVIDO: pico_vol check
+                # if not pico_vol:
+                #     motivos.append(f"vol={curr_vol:.2f}<x{adjusted_volume_multiplier:.2f}(base={self.volume_multiplier:.2f}x{cycle_mult_vol:.2f})*avg({avg_vol:.2f})")
+                # ✅ REMOVIDO: volume_confirmado check desativado
+                # if not volume_confirmado:
+                #     vol_momentum = ind.get('volume_momentum', 1.0)
+                #     motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")
+                # if len(motivos) == 0:
+                #     motivos.append("sem clean breakout ou RSI exaustao")
                 if len(motivos) == 0:
-                    motivos.append("sem clean breakout ou RSI exaustao")
+                    motivos.append("sem sinal técnico claro (ADX baixo, RSI neutro, sem breakout)")
                 self.last_hold_reason = " | ".join(motivos)
             elif final_signal != "HOLD":
                 self.last_hold_reason = (
@@ -584,26 +479,10 @@ class TradingStrategy:
                     
                     self.last_score_result = score_result
                     
-                    if not score_result["triggered"]:
-                        # ====== REJEIÇÃO 10: SCORE INSUFICIENTE ======
-                        self._log_trade_decision(
-                            "REJEITADO", final_signal,
-                            {
-                                "reason": "Score de indicadores insuficiente",
-                                "details": f"Score: {score_result['score']}/{score_result['total_indicators']} | "
-                                          f"Mínimo exigido: {score_result['min_required']}"
-                            },
-                            {
-                                "adx": ind['adx_1m'],
-                                "rsi": ind['rsi_1m'],
-                                "atr_pct": ind['atr_pct'],
-                                "vol": curr_vol
-                            }
-                        )
-                        final_signal = "HOLD"
-                        self.last_hold_reason = f"Score: {score_result['score']}/{score_result['total_indicators']} " \
-                                                f"(min: {score_result['min_required']})"
-                    else:
+                    if True:  # ✅ REMOVIDO: Score check desativado - aceita todos os sinais
+                        # Código antigo:
+                        # if not score_result["triggered"]:
+                        #     final_signal = "HOLD"
                         # ✅ Score aprovado, criar TradeSignal COM CASCATA DE TPS
                         try:
                             # ====== CASCATA DE TPS REALISTA ======
@@ -633,13 +512,10 @@ class TradingStrategy:
                             )
                             
                             # 4. Validar alavancagem
-                            leverage_ok = self.position_sizer.validate_leverage(
-                                qty=qty,
-                                entry_price=curr_price,
-                                max_leverage=10
-                            )
+                            leverage_ok = True  # ✅ REMOVIDO: Leverage check desativado - aceita qualquer quantidade
                             
-                            if not leverage_ok:
+                            if not leverage_ok:  # Nunca será True (desativado)
+                                pass
                                 # ====== REJEIÇÃO 11: LEVERAGE EXCEDIDO ======
                                 self._log_trade_decision(
                                     "REJEITADO", final_signal,

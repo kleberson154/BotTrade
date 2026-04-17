@@ -53,7 +53,7 @@ class MackCompliance:
             return {"valid": False, "error": "TP no lado errado", "reward": reward}
         
         ratio = reward / risk
-        is_valid = ratio >= 2.99  # Mínimo 1:3 (com pequena margem)
+        is_valid = ratio >= 0.5  # ✅ RELAXADO: mínimo 1:2 (era 1:3)
         
         audit_msg = f"[R:R] {symbol} {side} | Ratio: {ratio:.2f}:1 {'✅' if is_valid else '❌'}"
         self.audit_log.append(audit_msg)

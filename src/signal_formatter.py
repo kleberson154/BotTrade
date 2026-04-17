@@ -90,7 +90,7 @@ class MackRulesValidator:
             reward = entry - tp_price
             ratio = reward / risk if risk > 0 else 0
         
-        is_valid = ratio >= 1.99  # Mínimo 1:2 (deixar margem para 1.99)
+        is_valid = True  # ✅ REMOVIDO: RR check desativado - aceita qualquer ratio
         
         return {
             "is_valid": is_valid,
