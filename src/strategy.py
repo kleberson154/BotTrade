@@ -9,7 +9,10 @@ from src.mack_compliance import MackCompliance, PositionSizer
 from src.tp_cascade_manager import TPCascadeManager
 from src.fibonacci_manager import FibonacciManager
 from src.indicator_scorer import IndicatorScorer
-from src.indicators import TechnicalIndicators
+from src.indicators import (
+    CHoCHAnalyzer, POIAnalyzer, FVGAnalyzer,
+    DowTheoryAnalyzer, SMA20Analyzer, VolumeAnalyzer, LiquidityCaptureAnalyzer
+)
 
 log = logging.getLogger(__name__)
 
@@ -22,23 +25,18 @@ class TradingStrategy:
     def __init__(self, symbol, notifier):
         self.symbol = symbol
         self.notifier = notifier
-        self.data_1m = pd.DataFrame()
+        self.data_1h = pd.DataFrame()
         self.data_15m = pd.DataFrame()
-        self.candles_1m = python_deque(maxlen=300)
+        self.candles_1h = python_deque(maxlen=300)
         self.candles_15m = python_deque(maxlen=300)
-        self._dirty_1m = False
+        self._dirty_1h = False
         self._dirty_15m = False
         
         # ⚡ LEVERAGE DINÂMICO
         self.base_leverage = get_leverage_for_symbol(symbol)  # 5x ou 10x
         
         # 📊 PARÂMETROS DE ENTRADA (Scalping - Modo Agressivo)
-        self.ema_1m_trend = 20
-        self.ema_15m_period = 200
         self.min_15m_candles = 200
-        self.min_adx = 1                    # MÍNIMO ABSOLUTO: 1 (praticamente desativado)
-        self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
-        self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
         # Cascata de TPs (não mais TRAILING STOP)
         self.use_regime_filter = False      # ❌ COMPLETAMENTE DESATIVADO: remove regime gap check
@@ -47,40 +45,8 @@ class TradingStrategy:
         self.allow_long = True
         self.allow_short = True
         
-        # Regime-aware parameters
-        self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
-        self.regime_params_cold = {
-            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
-            "volume_multiplier": 0.5,        # 50% de média
-            "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.5,        # SL mais apertado
-            "leverage": 5.0,                 # alavancagem reduzida
-            "require_volume_peak": False,    # Desativado
-        }
-        self.regime_params_lateral = {
-            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
-            "volume_multiplier": 0.7,        # 70% de média
-            "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.3,
-            "leverage": 3.0,                 # alavancagem baixa
-            "require_volume_peak": False,    # Desativado
-        }
-        self.regime_params_normal = {
-            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
-            "volume_multiplier": 0.8,        # 80% de média
-            "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.8,
-            "leverage": 10.0,
-            "require_volume_peak": False,    # Desativado
-        }
-        self.regime_params_hot = {
-            "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
-            "volume_multiplier": 1.0,        # 100% de média
-            "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 2.2,        # SL mais largo em volatilidade extrema
-            "leverage": 12.0,                # Reduzido de 15 para 12
-            "require_volume_peak": False,    # Desativado
-        }
+        # Regime-aware parameters (simplificado - não usamos mais)
+        self.current_regime = "NORMAL"      # Sempre NORMAL
         
         # Controle de Posição
         self.is_positioned = False
@@ -118,6 +84,20 @@ class TradingStrategy:
         # =========================================================
         self.indicator_scorer = IndicatorScorer(min_score=3, symbol=symbol)
         self.last_score_result = None  # Último resultado de score
+        
+        # =========================================================
+        # 🆕 ANALISADORES DE ESTRUTURA E LIQUIDEZ (7 TOTAL)
+        # =========================================================
+        # Liquidez (3 primeiros)
+        self.choch_analyzer = CHoCHAnalyzer()
+        self.poi_analyzer = POIAnalyzer()
+        self.fvg_analyzer = FVGAnalyzer()
+        # Estrutura e Volume (4 últimos)
+        self.dow_analyzer = DowTheoryAnalyzer()
+        self.sma20_analyzer = SMA20Analyzer()
+        self.volume_analyzer = VolumeAnalyzer()
+        self.liquidity_analyzer = LiquidityCaptureAnalyzer()
+        self.last_liquidity_results = {}  # Armazenar resultados de todos os 7 analisadores
 
     # =========================================================
     # UTILITÁRIOS DE CÁLCULO (OTIMIZADOS)
@@ -171,86 +151,51 @@ class TradingStrategy:
             )
             log_level(ind_msg)
 
-    def detect_market_regime(self, df_1m):
-        """Detecta regime de mercado baseado em ATR e ADX."""
-        if len(df_1m) < 30:
+    def detect_market_regime(self, df_1h):
+        """Detecta regime de mercado - simplificado (apenas retorna NORMAL)."""
+        if len(df_1h) < 30:
             return "NORMAL"
-        
-        recent = df_1m.tail(30)
-        atr_pct = TechnicalIndicators.calculate_atr_pct(recent)
-        adx = TechnicalIndicators.calculate_adx(df_1m).iloc[-1]
-        
-        # 🔥 HOT: ATR MUITO alto (volatilidade extrema >0.008 = 0.8%)
-        if atr_pct >= 0.0080:
-            return "HOT"
-        # 🔥 HOT: ATR alto (0.003 a 0.008 = 0.3% a 0.8%)
-        elif atr_pct >= 0.0030:
-            return "HOT"
-        # 🧊 COLD: ATR muito baixo
-        elif atr_pct < 0.0010 and adx < 20:
-            return "COLD"
-        # 〰️ LATERAL: ADX muito baixo (sem tendência)
-        elif adx < 15 and atr_pct < 0.0018:
-            return "LATERAL"
-        # ✅ NORMAL: tudo dentro da normalidade
-        else:
-            return "NORMAL"
+        # Regime sempre NORMAL - não estamos usando indicadores para detectar regimes
+        return "NORMAL"
     
     def apply_regime_params(self):
-        """Aplica parâmetros baseados no regime detectado."""
-        params = {
-            "COLD": self.regime_params_cold,
-            "LATERAL": self.regime_params_lateral,
-            "NORMAL": self.regime_params_normal,
-            "HOT": self.regime_params_hot,
-        }.get(self.current_regime, self.regime_params_normal)
-        
-        self.min_volatilidade_pct = params["min_volatilidade_pct"]
-        self.volume_multiplier = params["volume_multiplier"]
-        self.min_adx = params["min_adx"]
-        self.require_volume_peak = params.get("require_volume_peak", True)  # Novo: controla se volume é obrigatório
+        """Aplica parâmetros - simplificado (não estamos usando regime_params mais)."""
+        pass
 
-    def calculate_indicators(self, df_1m, df_15m):
-        """Calcula apenas o necessário para a tomada de decisão atual."""
+    def calculate_indicators(self, df_1h, df_15m):
+        """Calcula indicadores - apenas estrutura de mercado e liquidez."""
         results = {}
-        
-        # Detecta regime e aplica parâmetros
-        self.current_regime = self.detect_market_regime(df_1m)
+        self.current_regime = self.detect_market_regime(df_1h)
         self.apply_regime_params()
         
-        # M15 Indicators
-        ema_200_15 = df_15m['close'].ewm(span=200, adjust=False).mean()
-        results['ema_200_15'] = ema_200_15.iloc[-1]
+        # =========================================================
+        # 🔥 CHAMAR TODOS OS 7 ANALISADORES
+        # =========================================================
+        df_1h_tail = df_1h.tail(100)
+        current_trend = "UP" if df_1h['close'].iloc[-1] > df_1h['open'].iloc[-1] else "DOWN"
         
-        # Regime Filter (EMA 50 vs 200)
-        ema_50_15 = df_15m['close'].ewm(span=50, adjust=False).mean().iloc[-1]
-        results['regime_gap'] = abs(ema_50_15 - results['ema_200_15']) / df_15m['close'].iloc[-1]
-        results['market_regime'] = self.current_regime
-
-        # M1 Indicators
-        results['ema_20_1m'] = TechnicalIndicators.calculate_ema(df_1m['close'], 20).iloc[-1]
-        results['rsi_1m'] = TechnicalIndicators.calculate_rsi(df_1m['close']).iloc[-1]
-        results['adx_1m'] = TechnicalIndicators.calculate_adx(df_1m).iloc[-1]
+        # Liquidez (3)
+        choch_result = self.choch_analyzer.analyze_choch(df_1h_tail, current_trend)
+        poi_result = self.poi_analyzer.analyze_poi(df_1h_tail, lookback=20)
+        fvg_result = self.fvg_analyzer.analyze_fvg(df_1h_tail)
         
-        # ATR para volatilidade
-        results['atr_pct'] = TechnicalIndicators.calculate_atr_pct(df_1m)
+        # Estrutura (4)
+        dow_result = self.dow_analyzer.analyze(df_1h_tail)
+        sma20_result = self.sma20_analyzer.analyze(df_1h_tail)
+        volume_result = self.volume_analyzer.analyze(df_1h_tail)
+        liquidity_result = self.liquidity_analyzer.analyze(df_1h_tail)
         
-        # Volume Divergence: Confirma se volume está apoiando a direção do preço
-        # Retorna True se volume está CRESCENDO na última vela (suporta movimento de preço)
-        if len(df_1m) >= 5:
-            vol_recent = df_1m['volume'].iloc[-1]
-            vol_avg5 = df_1m['volume'].iloc[-5:-1].mean()
-            vol_trend = vol_recent > vol_avg5  # True se volume increasing
-            
-            # Calcula também o momentum de volume (aceleração)
-            vol_momentum = vol_recent / vol_avg5 if vol_avg5 > 0 else 1.0
-            
-            # CORRIGIDO: apenas checar momentum (vol_trend sempre False se momentum < 1.0 por definição)
-            results['volume_divergence_ok'] = vol_momentum > 0.40  # Mínimo 40% de momentum
-            results['volume_momentum'] = vol_momentum
-        else:
-            results['volume_divergence_ok'] = True  # Se dados insuficientes, permite
-            results['volume_momentum'] = 1.0
+        # Armazenar todos os 7 resultados
+        self.last_liquidity_results = {
+            'choch': choch_result,
+            'poi': poi_result,
+            'fvg': fvg_result,
+            'dow_theory': dow_result,
+            'sma20': sma20_result,
+            'volume': volume_result,
+            'liquidity': liquidity_result,
+        }
+        results['analyzers'] = self.last_liquidity_results
         
         return results
 
@@ -275,98 +220,51 @@ class TradingStrategy:
                 return "HOLD", 0
             
             # ====== REJEIÇÃO 2: DADOS INSUFICIENTES ======
-            if len(self.data_1m) < 40 or len(self.data_15m) < self.min_15m_candles:
-                self.last_hold_reason = f"dados insuficientes 1m={len(self.data_1m)} 15m={len(self.data_15m)}"
+            if len(self.data_1h) < 40 or len(self.data_15m) < self.min_15m_candles:
+                self.last_hold_reason = f"dados insuficientes 1h={len(self.data_1h)} 15m={len(self.data_15m)}"
                 self._log_trade_decision(
                     "REJEITADO", "HOLD",
                     {
                         "reason": "Dados insuficientes para análise",
-                        "details": f"Candles disponíveis: 1m={len(self.data_1m)}/40 | 15m={len(self.data_15m)}/{self.min_15m_candles}"
+                        "details": f"Candles disponíveis: 1h={len(self.data_1h)}/40 | 15m={len(self.data_15m)}/{self.min_15m_candles}"
                     }
                 )
                 return "HOLD", 0
 
             # 1. Preparação de Dados e Indicadores
-            ind = self.calculate_indicators(self.data_1m.tail(100), self.data_15m.tail(250))
+            ind = self.calculate_indicators(self.data_1h.tail(100), self.data_15m.tail(250))
             
-            curr_price = self.data_1m['close'].iloc[-1]
-            curr_vol = self.data_1m['volume'].iloc[-1]
-            avg_vol = self.data_1m['volume'].tail(20).mean()
+            curr_price = self.data_1h['close'].iloc[-1]
+            curr_vol = self.data_1h['volume'].iloc[-1]
+            avg_vol = self.data_1h['volume'].tail(20).mean()
 
-            # ====== REJEIÇÃO 3: REGIME FRACO ======
-            if self.use_regime_filter and ind['regime_gap'] < 0.010:  # AUMENTADO: 0.010 (era 0.0015 - muito rigoroso)
-                self.last_hold_reason = f"regime fraco gap={ind['regime_gap']:.4f} (<0.010)"
-                self._log_trade_decision(
-                    "REJEITADO", "HOLD",
-                    {
-                        "reason": "Regime fraco - Mercado sem tendência clara",
-                        "details": f"Regime gap: {ind['regime_gap']:.4f} < 0.010 | Regime: {ind['market_regime']}"
-                    },
-                    {
-                        "adx": ind['adx_1m'],
-                        "rsi": ind['rsi_1m'],
-                        "atr_pct": ind['atr_pct'],
-                        "vol": curr_vol
-                    }
-                )
-                return "HOLD", 0
-
-            # 3. Lógica de Decisão (Regime-Aware)
-            raw_signal = "HOLD"
-            dist_sl = 0
+            # ====== REJEIÇÃO 3: ESTRUTURA DOS ANALISADORES ======
+            ind = self.calculate_indicators(self.data_1h.tail(100), self.data_15m.tail(250))
             
-            # ⚡ Ajustes Dinâmicos por Ciclos de Mercado (RSI como proxy)
-            rsi = ind['rsi_1m']
-            cycle_mult_adx = 1.0
-            cycle_mult_vol = 1.0
+            curr_price = self.data_1h['close'].iloc[-1]
+            curr_vol = self.data_1h['volume'].iloc[-1]
+            avg_vol = self.data_1h['volume'].tail(20).mean()
             
-            if rsi > 65:  # Fase quente/overbought - menos volume, mais rigor técnico
-                cycle_mult_adx = 1.15    # Exigir ADX mais alto (reduz false signals em picos)
-                cycle_mult_vol = 0.9     # Menos exigente com volume (momentum está claro)
-            elif rsi < 35:  # Fase fria/oversold - mais volume, menos rigor técnico
-                cycle_mult_adx = 0.85    # Mais relaxo com ADX (aproveitando reversão)
-                cycle_mult_vol = 1.1     # Mais exigente com volume (validação mais forte)
-            
-            adjusted_min_adx = self.min_adx * cycle_mult_adx
-            adjusted_volume_multiplier = self.volume_multiplier * cycle_mult_vol
-            
-            pico_vol = curr_vol > (avg_vol * adjusted_volume_multiplier)
-            volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
-            tendencia_forte = ind['adx_1m'] >= adjusted_min_adx
-            volume_confirmado = True  # ✅ DESATIVADO COMPLETAMENTE: sem restrição de volume
-            
-            # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
-            if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
-                # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
-                pico_vol = True
-
-            # ✅ REMOVIDO: sem mais verificações, vai direto para lógica de BUY/SELL
-            # Anteriormente checava: if not (tendencia_forte and volat_ok): return "HOLD"
-            # Agora apenas processa sinais de RSI
-
-            # M15 Context
+            # =========================================================
+            # LÓGICA SIMPLIFICADA: Apenas Tendência 15m
+            # =========================================================
             m15_last = self.data_15m.iloc[-1]
             m15_is_green = m15_last['close'] > m15_last['open']
             m15_is_red = m15_last['close'] < m15_last['open']
             
-            # Respiro/Máximas
-            max_15m = self.data_1m['high'].iloc[-16:-1].max()
-            min_15m = self.data_1m['low'].iloc[-16:-1].min()
+            raw_signal = "HOLD"
+            dist_sl = 0
             
-            # ✅ DESATIVADO: Clean Breakout filter - aceita qualquer preço > EMA200
-            is_clean_breakout_up = True  # Aceita sempre
-            is_clean_breakout_down = True  # Aceita sempre
-
-            # Condição de COMPRA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
-            if ind['rsi_1m'] < self.rsi_overbought:  # Apenas verifica RSI não está em exaustão
+            # BUY: 15m verde
+            if m15_is_green:
                 raw_signal = "BUY"
-                min_rec = self.data_1m['low'].tail(10).min()
+                min_rec = self.data_15m['low'].tail(10).min()
                 dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
-
-            # Condição de VENDA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
-            elif ind['rsi_1m'] > self.rsi_oversold:  # Apenas verifica RSI não está em exaustão
+            
+            # SELL: 15m vermelho
+            elif m15_is_red:
                 raw_signal = "SELL"
-                max_rec = self.data_1m['high'].tail(10).max()
+                max_rec = self.data_15m['high'].tail(10).max()
                 dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.015)
 
             # 4. Filtros de Sentimento e Inversão
@@ -383,28 +281,9 @@ class TradingStrategy:
                 log.info(f"🔄 [{self.symbol}] Inversão: {old} -> {final_signal}")
 
             if final_signal == "HOLD" and self.last_hold_reason == "avaliando":
-                motivos = []
-                if not tendencia_forte:
-                    motivos.append(f"adx={ind['adx_1m']:.1f}<{adjusted_min_adx:.1f}(base={self.min_adx:.1f}x{cycle_mult_adx:.2f})")
-                if not volat_ok:
-                    motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
-                # ✅ REMOVIDO: pico_vol check
-                # if not pico_vol:
-                #     motivos.append(f"vol={curr_vol:.2f}<x{adjusted_volume_multiplier:.2f}(base={self.volume_multiplier:.2f}x{cycle_mult_vol:.2f})*avg({avg_vol:.2f})")
-                # ✅ REMOVIDO: volume_confirmado check desativado
-                # if not volume_confirmado:
-                #     vol_momentum = ind.get('volume_momentum', 1.0)
-                #     motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")
-                # if len(motivos) == 0:
-                #     motivos.append("sem clean breakout ou RSI exaustao")
-                if len(motivos) == 0:
-                    motivos.append("sem sinal técnico claro (ADX baixo, RSI neutro, sem breakout)")
-                self.last_hold_reason = " | ".join(motivos)
+                self.last_hold_reason = "15m não possui sinal claro (esperando candle verde ou vermelho)"
             elif final_signal != "HOLD":
-                self.last_hold_reason = (
-                    f"entrada={final_signal} adx={ind['adx_1m']:.1f} "
-                    f"atr%={ind['atr_pct']:.4f} vol={curr_vol:.2f}/avg20={avg_vol:.2f}"
-                )
+                self.last_hold_reason = f"entrada={final_signal} | 15m={'verde' if m15_is_green else 'vermelho'} | vol={curr_vol:.2f}/avg20={avg_vol:.2f}"
 
             # =========================================================
             # 🆕 INTEGRAÇÃO MACK: Validação RR 1:2 Antes de Retornar
@@ -436,12 +315,6 @@ class TradingStrategy:
                         {
                             "reason": "Razão Risk:Reward insuficiente (Mack Rule #1)",
                             "details": f"RR encontrada: {validate_result['ratio']}:1 | Mínimo exigido: 1:2"
-                        },
-                        {
-                            "adx": ind['adx_1m'],
-                            "rsi": ind['rsi_1m'],
-                            "atr_pct": ind['atr_pct'],
-                            "vol": curr_vol
                         }
                     )
                     final_signal = "HOLD"
@@ -449,10 +322,7 @@ class TradingStrategy:
                 else:
                     # ⭐ VALIDAÇÃO 2: SCORE DE INDICADORES
                     score_result = self.indicator_scorer.calculate_score(
-                        df=self.data_1m.tail(100),
-                        min_adx=self.min_adx,
-                        min_volatilidade=self.min_volatilidade_pct,
-                        volume_multiplier=self.volume_multiplier
+                        df=self.data_1h.tail(100)
                     )
                     
                     self.last_score_result = score_result
@@ -500,12 +370,6 @@ class TradingStrategy:
                                     {
                                         "reason": "Alavancagem excedida (>10x com 2% risk)",
                                         "details": f"Qty calculada: {qty:.4f} | Saldo: ${self.account_balance:.2f}"
-                                    },
-                                    {
-                                        "adx": ind['adx_1m'],
-                                        "rsi": ind['rsi_1m'],
-                                        "atr_pct": ind['atr_pct'],
-                                        "vol": curr_vol
                                     }
                                 )
                                 final_signal = "HOLD"
@@ -522,8 +386,8 @@ class TradingStrategy:
                                 self.last_trade_signal = signal
                                 
                                 # 6. Fibonacci boost (se aplicável)
-                                max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                                min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                                max_15m = self.data_1h['high'].iloc[-16:-1].max()
+                                min_15m = self.data_1h['low'].iloc[-16:-1].min()
                                 
                                 fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
                                     curr_price, curr_price, max_15m, min_15m, final_signal
@@ -554,8 +418,8 @@ class TradingStrategy:
                                         )
                                     },
                                     {
-                                        "adx": ind['adx_1m'],
-                                        "rsi": ind['rsi_1m'],
+                                        "adx": ind['adx_1h'],
+                                        "rsi": ind['rsi_1h'],
                                         "atr_pct": ind['atr_pct'],
                                         "vol": curr_vol
                                     }
@@ -570,8 +434,8 @@ class TradingStrategy:
                                     "details": f"Erro: {str(e)[:100]}"
                                 },
                                 {
-                                    "adx": ind['adx_1m'],
-                                    "rsi": ind['rsi_1m'],
+                                    "adx": ind['adx_1h'],
+                                    "rsi": ind['rsi_1h'],
                                     "atr_pct": ind['atr_pct'],
                                     "vol": curr_vol
                                 }
@@ -629,19 +493,19 @@ class TradingStrategy:
         return not (dt.minute == 0)  # RELAXADO: apenas bloqueia minuto 0 (era 0,1 e 59)
 
     def add_new_candle(self, timeframe, candle_data):
-        target = self.candles_1m if timeframe == "1m" else self.candles_15m
+        target = self.candles_1h if timeframe == "1h" else self.candles_15m
         if len(target) > 0 and target[-1]['timestamp'] == candle_data['timestamp']:
             target[-1].update(candle_data)
         else:
             target.append(candle_data)
         
-        if timeframe == "1m": self._dirty_1m = True
+        if timeframe == "1h": self._dirty_1h = True
         else: self._dirty_15m = True
 
     def _sync_dataframes(self):
-        if self._dirty_1m:
-            self.data_1m = pd.DataFrame(list(self.candles_1m))
-            self._dirty_1m = False
+        if self._dirty_1h:
+            self.data_1h = pd.DataFrame(list(self.candles_1h))
+            self._dirty_1h = False
         if self._dirty_15m:
             self.data_15m = pd.DataFrame(list(self.candles_15m))
             self._dirty_15m = False
@@ -688,10 +552,10 @@ class TradingStrategy:
         return self.indicator_scorer.get_telegram_message(self.side or "BUY")
 
     def load_historical_data(self, timeframe, candles):
-        target = self.candles_1m if timeframe == "1m" else self.candles_15m
+        target = self.candles_1h if timeframe == "1h" else self.candles_15m
         for candle in candles:
             if len(target) == 0 or target[-1]['timestamp'] != candle['timestamp']:
                 target.append(candle)
-        self._dirty_1m = (timeframe == "1m")
+        self._dirty_1h = (timeframe == "1h")
         self._dirty_15m = (timeframe == "15m")
         self._sync_dataframes()

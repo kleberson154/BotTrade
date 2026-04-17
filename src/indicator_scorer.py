@@ -1,282 +1,195 @@
 """
-⭐ SISTEMA DE PONTUAÇÃO DE INDICADORES
-Calcula score de indicadores técnicos para validar entrada
+SISTEMA DE PONTUACAO DE INDICADORES (SIMPLIFICADO)
 
 Indicadores Utilizados:
-  1. RSI (acima 80 ou abaixo 20) = 1 ponto
-  2. MFI (acima 80 ou abaixo 20) = 1 ponto
-  3. ADX (acima de min_adx) = 1 ponto
-  4. Volatilidade ATR = 1 ponto
-  5. Volume = 1 ponto
+  1. Liquidez (CHOCH, POI, FVG) = APENAS 1 PONTO (escolher UM deles)
+  2. Volume = 1 ponto
 
-Regra: Bate score mínimo → Execute ordem
-Telegram: Mostra quais indicadores foram batidos ✅ e quais falharam ❌
+Total maximo: 2 pontos
+
+REGRA IMPORTANTE:
+- CHOCH, POI, FVG sao indicadores de liquidez
+- Apenas UM deles deve ser acionado
+- Se multiplos acionados, escolher o de maior confianca
 """
 
 import logging
 import pandas as pd
-import numpy as np
-from typing import Dict, List, Tuple
-
-from src.indicators import TechnicalIndicators
+from typing import Dict, Optional
 
 log = logging.getLogger(__name__)
 
 
 class IndicatorScorer:
-    """
-    Calcula pontuação de indicadores técnicos.
-    Cada indicador que passa = +1 ponto
-    """
+    """Calcula pontuacao de indicadores com apenas liquidez + volume."""
     
-    def __init__(self, min_score: int = 3, symbol: str = ""):
-        """
-        Args:
-            min_score: Pontuação mínima para executar ordem (ex: 3)
-            symbol: Símbolo tradado para logs
-        """
+    def __init__(self, min_score: int = 1, symbol: str = ""):
         self.min_score = min_score
         self.symbol = symbol
-        self.last_indicators = {}  # Armazenar últimas medições
+        self.last_indicators = {}
     
     def calculate_score(
         self,
         df: pd.DataFrame,
-        min_adx: float = 15,
-        min_volatilidade: float = 0.0008,
-        volume_multiplier: float = 1.2,
-        rsi_period: int = 14,
-        mfi_period: int = 14
+        choch_result: Optional[Dict] = None,
+        poi_result: Optional[Dict] = None,
+        fvg_result: Optional[Dict] = None,
+        min_volume_multiplier: float = 1.2
     ) -> Dict:
-        """
-        Calcula score total dos indicadores.
+        """Calcula score total dos indicadores."""
         
-        Returns:
-            {
-                "score": 0-5,
-                "total_indicators": 5,
-                "indicators": {
-                    "rsi": {"status": "✅", "value": 75.5},
-                    "mfi": {"status": "❌", "value": 45.2},
-                    ...
-                },
-                "triggered": bool,
-                "message": str
-            }
-        """
-        
-        if len(df) < max(rsi_period, mfi_period) + 10:
+        if len(df) < 20:
             return {
                 "score": 0,
-                "total_indicators": 5,
+                "total_indicators": 2,
                 "indicators": {},
                 "triggered": False,
-                "message": f"Dados insuficientes ({len(df)} < {rsi_period + 10})"
+                "message": f"Dados insuficientes ({len(df)} < 20)",
+                "confidence": 0
             }
         
-        # 📊 Calcular cada indicador
         indicators = {}
         score = 0
+        triggered_indicators = []
         
-        # 1️⃣ RSI
-        rsi_result = self._check_rsi(df, rsi_period)
-        indicators["RSI"] = rsi_result
-        if rsi_result["status"] == "✅":
+        # LIQUIDEZ: CHOCH, POI, FVG (APENAS 1 PONTO, escolher o melhor)
+        liquidity_result = self._check_liquidity(choch_result, poi_result, fvg_result)
+        indicators["Liquidez"] = liquidity_result
+        
+        if liquidity_result["status"] == "OK":
             score += 1
+            triggered_indicators.append(f"Liquidez ({liquidity_result['type']})")
         
-        # 2️⃣ MFI
-        mfi_result = self._check_mfi(df, mfi_period)
-        indicators["MFI"] = mfi_result
-        if mfi_result["status"] == "✅":
-            score += 1
-        
-        # 3️⃣ ADX
-        adx_result = self._check_adx(df, min_adx)
-        indicators["ADX"] = adx_result
-        if adx_result["status"] == "✅":
-            score += 1
-        
-        # 4️⃣ Volatilidade (ATR)
-        atr_result = self._check_atr(df, min_volatilidade)
-        indicators["ATR"] = atr_result
-        if atr_result["status"] == "✅":
-            score += 1
-        
-        # 5️⃣ Volume
-        volume_result = self._check_volume(df, volume_multiplier)
+        # VOLUME
+        volume_result = self._check_volume(df, min_volume_multiplier)
         indicators["Volume"] = volume_result
-        if volume_result["status"] == "✅":
+        if volume_result["status"] == "OK":
             score += 1
+            triggered_indicators.append("Volume")
         
-        # 📈 Salvar para referência
-        self.last_indicators = indicators
-        
-        # ✅ Verificar se bate score mínimo
+        # RESULTADO FINAL
         triggered = score >= self.min_score
+        confidence = (score / 2) * 100
         
-        # 🔔 Mensagem
-        message = self._build_message(score, indicators)
+        message = self._build_message(
+            score, self.min_score, triggered_indicators, indicators
+        )
+        
+        self.last_indicators = indicators
         
         return {
             "score": score,
-            "total_indicators": 5,
-            "min_required": self.min_score,
+            "total_indicators": 2,
+            "min_score": self.min_score,
             "indicators": indicators,
+            "triggered_indicators": triggered_indicators,
             "triggered": triggered,
+            "confidence": confidence,
             "message": message,
-            "stats": {
-                "rsi": rsi_result["value"],
-                "mfi": mfi_result["value"],
-                "adx": adx_result["value"],
-                "atr_pct": atr_result["value"],
-                "volume_ratio": volume_result["value"],
+            "emoji": "OK" if triggered else "WAIT"
+        }
+    
+    @staticmethod
+    def _check_liquidity(choch_result: Optional[Dict], 
+                        poi_result: Optional[Dict],
+                        fvg_result: Optional[Dict]) -> Dict:
+        """Verifica APENAS UM dos 3 indicadores de liquidez (prioridade)."""
+        
+        # Prioridade 1: CHOCH
+        if choch_result and choch_result.get('choch_detected'):
+            return {
+                'status': 'OK',
+                'type': 'CHOCH',
+                'value': choch_result.get('severity', 'MEDIUM'),
+                'signal': choch_result.get('signal', 'HOLD'),
+                'details': choch_result.get('details', ''),
+                'confidence': 85
             }
-        }
-    
-    def _check_rsi(self, df: pd.DataFrame, period: int = 14) -> Dict:
-        """Verifica RSI > 80 ou < 20"""
-        rsi = self._calc_rsi(df["close"], period).iloc[-1]
         
-        triggered = rsi > 80 or rsi < 20
-        status = "✅" if triggered else "❌"
-        reason = f"RSI={rsi:.1f}"
+        # Prioridade 2: POI
+        if poi_result and poi_result.get('poi_signal') == 'APPROACH_POI':
+            nearest = poi_result.get('nearest_poi', 0)
+            poi_type = poi_result.get('nearest_poi_type', 'UNKNOWN')
+            return {
+                'status': 'OK',
+                'type': 'POI',
+                'value': poi_type,
+                'nearest_poi': nearest,
+                'details': poi_result.get('details', ''),
+                'confidence': 70
+            }
         
-        if rsi > 80:
-            reason += " (OVERBOUGHT)"
-        elif rsi < 20:
-            reason += " (OVERSOLD)"
+        # Prioridade 3: FVG
+        if fvg_result and fvg_result.get('fvg_signal') == 'CONVERGING':
+            return {
+                'status': 'OK',
+                'type': 'FVG',
+                'value': fvg_result.get('nearest_fvg'),
+                'distance_pct': fvg_result.get('distance_to_fvg_pct', 0),
+                'details': fvg_result.get('details', ''),
+                'confidence': 60
+            }
         
+        # Nenhum acionado
         return {
-            "status": status,
-            "value": round(rsi, 2),
-            "reason": reason,
-            "threshold": "80+ ou -20"
+            'status': 'FAIL',
+            'type': 'NONE',
+            'value': None,
+            'details': 'Nenhum indicador de liquidez acionado',
+            'confidence': 0
         }
     
-    def _check_mfi(self, df: pd.DataFrame, period: int = 14) -> Dict:
-        """Verifica MFI > 80 ou < 20"""
-        mfi = self._calc_mfi(df, period)
+    @staticmethod
+    def _check_volume(df: pd.DataFrame, min_multiplier: float = 1.2) -> Dict:
+        """Verifica se volume esta elevado"""
         
-        triggered = mfi > 80 or mfi < 20
-        status = "✅" if triggered else "❌"
-        reason = f"MFI={mfi:.1f}"
+        if len(df) < 20:
+            return {'status': 'FAIL', 'value': None}
         
-        if mfi > 80:
-            reason += " (OVERBOUGHT)"
-        elif mfi < 20:
-            reason += " (OVERSOLD)"
+        avg_volume = df['volume'].rolling(window=20).mean().iloc[-1]
+        current_volume = df['volume'].iloc[-1]
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
         
-        return {
-            "status": status,
-            "value": round(mfi, 2),
-            "reason": reason,
-            "threshold": "80+ ou -20"
-        }
+        if volume_ratio > min_multiplier:
+            return {
+                'status': 'OK',
+                'value': volume_ratio,
+                'current': int(current_volume),
+                'average': int(avg_volume)
+            }
+        
+        return {'status': 'FAIL', 'value': volume_ratio}
     
-    def _check_adx(self, df: pd.DataFrame, min_adx: float = 15) -> Dict:
-        """Verifica ADX > min_adx (tendência forte)"""
-        adx = self._calc_adx(df, 14).iloc[-1]
+    @staticmethod
+    def _build_message(score: int, min_score: int, 
+                      triggered: list, indicators: Dict) -> str:
+        """Constroi mensagem resumida"""
         
-        triggered = adx >= min_adx
-        status = "✅" if triggered else "❌"
-        
-        return {
-            "status": status,
-            "value": round(adx, 2),
-            "reason": f"ADX={adx:.1f}",
-            "threshold": f">={min_adx}"
-        }
-    
-    def _check_atr(self, df: pd.DataFrame, min_volatilidade: float = 0.0008) -> Dict:
-        """Verifica ATR % > min_volatilidade"""
-        atr_pct = self._calc_atr_pct(df)
-        
-        triggered = atr_pct >= min_volatilidade
-        status = "✅" if triggered else "❌"
-        
-        return {
-            "status": status,
-            "value": round(atr_pct, 4),
-            "reason": f"ATR%={atr_pct*100:.2f}%",
-            "threshold": f">={min_volatilidade*100:.2f}%"
-        }
-    
-    def _check_volume(self, df: pd.DataFrame, volume_multiplier: float = 1.2) -> Dict:
-        """Verifica Volume > média × multiplier"""
-        vol_current = df["volume"].iloc[-1]
-        vol_avg = df["volume"].tail(20).mean()
-        ratio = vol_current / vol_avg if vol_avg > 0 else 0
-        
-        triggered = ratio >= volume_multiplier
-        status = "✅" if triggered else "❌"
-        
-        return {
-            "status": status,
-            "value": round(ratio, 2),
-            "reason": f"Vol Ratio={ratio:.2f}x",
-            "threshold": f">={volume_multiplier}x"
-        }
-    
-    # ============================================================
-    # CÁLCULOS DE INDICADORES (Delegados para TechnicalIndicators)
-    # ============================================================
-    
-    def _calc_rsi(self, prices, period: int = 14) -> pd.Series:
-        """Calcula RSI (delega para TechnicalIndicators)"""
-        return TechnicalIndicators.calculate_rsi(prices, period)
-    
-    def _calc_mfi(self, df: pd.DataFrame, period: int = 14) -> float:
-        """Calcula MFI (delega para TechnicalIndicators)"""
-        return TechnicalIndicators.calculate_mfi(df, period)
-    
-    def _calc_adx(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calcula ADX (delega para TechnicalIndicators)"""
-        return TechnicalIndicators.calculate_adx(df, period)
-    
-    def _calc_atr_pct(self, df: pd.DataFrame, period: int = 14) -> float:
-        """Calcula ATR em % (delega para TechnicalIndicators)"""
-        return TechnicalIndicators.calculate_atr_pct(df, period)
-    
-    # ============================================================
-    # FORMATAÇÃO DE MENSAGEM
-    # ============================================================
-    
-    def _build_message(self, score: int, indicators: Dict) -> str:
-        """Constrói mensagem formatada dos indicadores"""
-        message = f"⭐ SCORE: {score}/5\n\n"
-        
-        # Indicadores batidos
-        message += "✅ BATIDOS:\n"
-        for ind_name, ind_data in indicators.items():
-            if ind_data["status"] == "✅":
-                message += f"  • {ind_name}: {ind_data['reason']}\n"
-        
-        # Indicadores não batidos
-        message += "\n❌ NÃO BATIDOS:\n"
-        for ind_name, ind_data in indicators.items():
-            if ind_data["status"] == "❌":
-                message += f"  • {ind_name}: {ind_data['reason']}\n"
-        
-        return message
+        if score >= min_score:
+            indicators_str = " + ".join(triggered)
+            return f"[{score}/2] SINAL VALIDO: {indicators_str}"
+        else:
+            indicators_str = " + ".join(triggered) if triggered else "Nenhum"
+            return f"[{score}/2] Aguardando (min: {min_score}). Acionados: {indicators_str}"
     
     def get_telegram_message(self, direction: str = "BUY") -> str:
         """Formata mensagem para Telegram"""
         if not self.last_indicators:
-            return "Nenhum cálculo realizado ainda"
+            return "Nenhum calculo realizado ainda"
         
-        score = sum(1 for ind in self.last_indicators.values() if ind["status"] == "✅")
+        score = sum(1 for ind in self.last_indicators.values() if ind.get("status") == "OK")
         
-        msg = f"🤖 *{self.symbol} - {direction}*\n"
-        msg += f"⭐ Score: {score}/5 (Min: {self.min_score})\n\n"
+        msg = f"Bot {self.symbol} - {direction}\n"
+        msg += f"Score: {score}/2 (Min: {self.min_score})\n\n"
         
-        msg += "✅ *Indicadores OK:*\n"
+        msg += "OK:\n"
         for name, data in self.last_indicators.items():
-            if data["status"] == "✅":
-                msg += f"  • {name}: {data['reason']}\n"
+            if data.get("status") == "OK":
+                msg += f"  - {name}: {data.get('value')}\n"
         
-        msg += "\n❌ *Indicadores Falhando:*\n"
+        msg += "\nFAIL:\n"
         for name, data in self.last_indicators.items():
-            if data["status"] == "❌":
-                msg += f"  • {name}: {data['reason']}\n"
+            if data.get("status") == "FAIL":
+                msg += f"  - {name}: {data.get('value')}\n"
         
         return msg

@@ -17,7 +17,6 @@ from src.notifier import TelegramNotifier
 from src.market_cycles import MarketCycleAnalyzer
 from src.tp_cascade_manager import TPCascadeManager
 from src.market_sentiment import MarketSentimentAnalyzer
-from src.indicators import TechnicalIndicators
 
 from dotenv import load_dotenv
 
@@ -86,8 +85,12 @@ def handle_signal_logic(message):
     strat = strategies.get(symbol)
     if not strat: return
     
+    # Apenas processar 1h (60) e 15m (15) - remover 1m
+    if timeframe not in ["60", "15"]:
+        return
+    
     candle = message["data"][0]
-    tf_key = "1m" if timeframe == "1" else "15m"
+    tf_key = "1h" if timeframe == "60" else "15m"
     strat.add_new_candle(tf_key, {
         "open": float(candle["open"]),
         "close": float(candle["close"]),
@@ -99,7 +102,7 @@ def handle_signal_logic(message):
 
     sentimento = get_market_sentiment()
 
-    if tf_key == "1m":
+    if tf_key == "1h":
         current_price = float(candle["close"])
         timestamp_candle = int(candle["start"]) / 60000 # em minutos
         is_confirmado = candle.get("confirm", False)
@@ -214,6 +217,23 @@ def execute_new_trade(symbol, signal, price, atr):
 
     try:
         strat = strategies[symbol]
+        
+        # 🆕 VALIDAÇÃO DE SCORE: Rejeita sinais com score baixo
+        score_result = strat.last_score_result
+        if score_result:
+            if not score_result.get('triggered', False):
+                log.warning(
+                    f"❌ [{symbol}] {signal} REJEITADO: Score baixo ({score_result.get('score', 0)}/{score_result.get('total_indicators', 5)}). "
+                    f"Motivo: {score_result.get('message', 'Score insuficiente')}"
+                )
+                return
+            else:
+                log.info(
+                    f"✅ [{symbol}] {signal} APROVADO: Score {score_result.get('score', 0)}/{score_result.get('total_indicators', 5)} "
+                    f"| Confiança: {score_result.get('confidence', 0):.1f}% | "
+                    f"Indicadores: {', '.join(score_result.get('triggered_indicators', []))}"
+                )
+        
         side = "Buy" if signal == "BUY" else "Sell"
         
         # 1. Fetch BTC Dominância
@@ -224,9 +244,9 @@ def execute_new_trade(symbol, signal, price, atr):
         # 2. Calcular sentimento de mercado
         volatility = (atr / price) if price > 0 else 0.001
         
-        # Estimar RSI simples (14 períodos)
-        if len(strat.data_1m) >= 14:
-            delta = strat.data_1m['close'].diff()
+        # Estimar RSI simples (14 períodos) usando 1h
+        if len(strat.data_1h) >= 14:
+            delta = strat.data_1h['close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rs = gain / loss
@@ -236,10 +256,10 @@ def execute_new_trade(symbol, signal, price, atr):
         else:
             rsi_value = 50
         
-        # Volume ratio (atual vs média 20 candles)
-        if len(strat.data_1m) >= 20:
-            avg_vol_20 = strat.data_1m['volume'].tail(20).mean()
-            curr_vol = strat.data_1m['volume'].iloc[-1]
+        # Volume ratio (atual vs média 20 candles) usando 1h
+        if len(strat.data_1h) >= 20:
+            avg_vol_20 = strat.data_1h['volume'].tail(20).mean()
+            curr_vol = strat.data_1h['volume'].iloc[-1]
             volume_ratio = curr_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
         else:
             volume_ratio = 1.0
@@ -251,7 +271,7 @@ def execute_new_trade(symbol, signal, price, atr):
             rsi_daily=rsi_value,
             volume_ratio=volume_ratio,
             market_phase=strat.current_regime,
-            atr_history=strat.data_1m
+            atr_history=strat.data_1h
         )
         
         log.info(f"📊 {sentiment_analyzer.get_sentiment_message(sentiment_data)}")
@@ -554,7 +574,7 @@ def check_market_heat():
     for symbol in SYMBOLS:
         strat = strategies.get(symbol)
         if not strat: continue
-        df = strat.data_1m
+        df = strat.data_1h
         if df is not None and len(df) >= 30:
             # 🔄 RECALCULA o regime em tempo real dentro do termômetro
             regime = strat.detect_market_regime(df)
@@ -569,8 +589,10 @@ def check_market_heat():
             threshold = regime_params.get("min_volatilidade_pct", 0.0012)
             
             recent = df.tail(30)
-            atr_pct = TechnicalIndicators.calculate_atr_pct(recent)
-            if pd.isna(atr_pct):
+            # TODO: Implementar calculate_atr_pct
+            # atr_pct = TechnicalIndicators.calculate_atr_pct(recent)
+            atr_pct = None
+            if atr_pct is None or pd.isna(atr_pct):
                 continue
             # 🔧 CORREÇÃO: atr_pct já é decimal (0.00086), multiplicar por 100 pra exibir como %
             atr_pct_display = atr_pct * 100
