@@ -18,6 +18,8 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
 
+from src.indicators import TechnicalIndicators
+
 log = logging.getLogger(__name__)
 
 
@@ -216,69 +218,24 @@ class IndicatorScorer:
         }
     
     # ============================================================
-    # CÁLCULOS DE INDICADORES
+    # CÁLCULOS DE INDICADORES (Delegados para TechnicalIndicators)
     # ============================================================
     
     def _calc_rsi(self, prices, period: int = 14) -> pd.Series:
-        """Calcula RSI"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss.replace(0, 0.001)
-        return 100 - (100 / (1 + rs))
+        """Calcula RSI (delega para TechnicalIndicators)"""
+        return TechnicalIndicators.calculate_rsi(prices, period)
     
     def _calc_mfi(self, df: pd.DataFrame, period: int = 14) -> float:
-        """Calcula Money Flow Index"""
-        # Money Flow = típico × volume
-        typical_price = (df["high"] + df["low"] + df["close"]) / 3
-        money_flow = typical_price * df["volume"]
-        
-        # Positive/Negative MF
-        price_change = df["close"].diff()
-        positive_mf = money_flow.where(price_change > 0, 0)
-        negative_mf = money_flow.where(price_change < 0, 0)
-        
-        positive_mf_sum = positive_mf.tail(period).sum()
-        negative_mf_sum = negative_mf.tail(period).sum()
-        
-        money_flow_ratio = positive_mf_sum / negative_mf_sum if negative_mf_sum > 0 else 0
-        mfi = 100 - (100 / (1 + money_flow_ratio))
-        
-        return mfi
+        """Calcula MFI (delega para TechnicalIndicators)"""
+        return TechnicalIndicators.calculate_mfi(df, period)
     
     def _calc_adx(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calcula ADX"""
-        plus_dm = df["high"].diff().clip(lower=0)
-        minus_dm = -df["low"].diff().clip(upper=0)
-        
-        tr = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - df["close"].shift()).abs(),
-            (df["low"] - df["close"].shift()).abs()
-        ], axis=1).max(axis=1)
-        
-        atr = tr.rolling(period).mean()
-        
-        plus_di = 100 * (plus_dm.rolling(period).mean() / atr).replace([np.inf, -np.inf], 0).fillna(0)
-        minus_di = 100 * (minus_dm.rolling(period).mean() / atr).replace([np.inf, -np.inf], 0).fillna(0)
-        
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1)
-        adx = dx.rolling(period).mean().bfill()
-        
-        return adx
+        """Calcula ADX (delega para TechnicalIndicators)"""
+        return TechnicalIndicators.calculate_adx(df, period)
     
     def _calc_atr_pct(self, df: pd.DataFrame, period: int = 14) -> float:
-        """Calcula ATR em %"""
-        tr = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - df["close"].shift()).abs(),
-            (df["low"] - df["close"].shift()).abs()
-        ], axis=1).max(axis=1)
-        
-        atr = tr.rolling(period).mean().iloc[-1]
-        atr_pct = atr / df["close"].iloc[-1]
-        
-        return atr_pct
+        """Calcula ATR em % (delega para TechnicalIndicators)"""
+        return TechnicalIndicators.calculate_atr_pct(df, period)
     
     # ============================================================
     # FORMATAÇÃO DE MENSAGEM

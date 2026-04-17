@@ -17,6 +17,7 @@ from src.notifier import TelegramNotifier
 from src.market_cycles import MarketCycleAnalyzer
 from src.tp_cascade_manager import TPCascadeManager
 from src.market_sentiment import MarketSentimentAnalyzer
+from src.indicators import TechnicalIndicators
 
 from dotenv import load_dotenv
 
@@ -356,9 +357,6 @@ def execute_new_trade(symbol, signal, price, atr):
                     {"tp": tp3, "percent": 20, "action": "CLOSE_FINAL", "desc": "TP3"},
                 ]
             )
-            
-            # Enviar mensagem de sentimento
-            notifier.send_message(sentiment_analyzer.get_sentiment_message(sentiment_data))
     except Exception as e:
         log.error(f"Erro na abertura de {symbol}: {e}")
 
@@ -571,12 +569,7 @@ def check_market_heat():
             threshold = regime_params.get("min_volatilidade_pct", 0.0012)
             
             recent = df.tail(30)
-            tr = pd.concat([
-                recent['high'] - recent['low'],
-                (recent['high'] - recent['close'].shift()).abs(),
-                (recent['low'] - recent['close'].shift()).abs()
-            ], axis=1).max(axis=1)
-            atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
+            atr_pct = TechnicalIndicators.calculate_atr_pct(recent)
             if pd.isna(atr_pct):
                 continue
             # 🔧 CORREÇÃO: atr_pct já é decimal (0.00086), multiplicar por 100 pra exibir como %

@@ -9,6 +9,7 @@ from src.mack_compliance import MackCompliance, PositionSizer
 from src.tp_cascade_manager import TPCascadeManager
 from src.fibonacci_manager import FibonacciManager
 from src.indicator_scorer import IndicatorScorer
+from src.indicators import TechnicalIndicators
 
 log = logging.getLogger(__name__)
 
@@ -176,11 +177,8 @@ class TradingStrategy:
             return "NORMAL"
         
         recent = df_1m.tail(30)
-        tr = pd.concat([recent['high'] - recent['low'],
-                        (recent['high'] - recent['close'].shift()).abs(),
-                        (recent['low'] - recent['close'].shift()).abs()], axis=1).max(axis=1)
-        atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
-        adx = self._calc_adx_single(df_1m).iloc[-1]
+        atr_pct = TechnicalIndicators.calculate_atr_pct(recent)
+        adx = TechnicalIndicators.calculate_adx(df_1m).iloc[-1]
         
         # 🔥 HOT: ATR MUITO alto (volatilidade extrema >0.008 = 0.8%)
         if atr_pct >= 0.0080:
@@ -230,15 +228,12 @@ class TradingStrategy:
         results['market_regime'] = self.current_regime
 
         # M1 Indicators
-        results['ema_20_1m'] = df_1m['close'].ewm(span=20, adjust=False).mean().iloc[-1]
-        results['rsi_1m'] = self._calc_rsi_single(df_1m).iloc[-1]
-        results['adx_1m'] = self._calc_adx_single(df_1m).iloc[-1]
+        results['ema_20_1m'] = TechnicalIndicators.calculate_ema(df_1m['close'], 20).iloc[-1]
+        results['rsi_1m'] = TechnicalIndicators.calculate_rsi(df_1m['close']).iloc[-1]
+        results['adx_1m'] = TechnicalIndicators.calculate_adx(df_1m).iloc[-1]
         
         # ATR para volatilidade
-        tr = pd.concat([df_1m['high'] - df_1m['low'], 
-                        (df_1m['high'] - df_1m['close'].shift()).abs(), 
-                        (df_1m['low'] - df_1m['close'].shift()).abs()], axis=1).max(axis=1)
-        results['atr_pct'] = tr.rolling(14).mean().iloc[-1] / df_1m['close'].iloc[-1]
+        results['atr_pct'] = TechnicalIndicators.calculate_atr_pct(df_1m)
         
         # Volume Divergence: Confirma se volume está apoiando a direção do preço
         # Retorna True se volume está CRESCENDO na última vela (suporta movimento de preço)
@@ -258,23 +253,6 @@ class TradingStrategy:
             results['volume_momentum'] = 1.0
         
         return results
-
-    def _calc_rsi_single(self, df, period=14):
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss.replace(0, 0.001)
-        return 100 - (100 / (1 + rs))
-
-    def _calc_adx_single(self, df, period=14):
-        plus_dm = df['high'].diff().clip(lower=0)
-        minus_dm = -df['low'].diff().clip(upper=0)
-        tr = pd.concat([df['high'] - df['low'], (df['high'] - df['close'].shift()).abs(), (df['low'] - df['close'].shift()).abs()], axis=1).max(axis=1)
-        atr = tr.rolling(period).mean()
-        plus_di = 100 * (plus_dm.rolling(period).mean() / atr).replace([np.inf, -np.inf], 0).fillna(0)
-        minus_di = 100 * (minus_dm.rolling(period).mean() / atr).replace([np.inf, -np.inf], 0).fillna(0)
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1)
-        return dx.rolling(period).mean().bfill()
 
     # =========================================================
     # LÓGICA DE SINAL
