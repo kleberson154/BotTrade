@@ -151,7 +151,6 @@ def validate_order_quantity(symbol, price, qty):
     
     if notional < min_notional:
         adjusted_qty = max(0.1, min_notional / price)
-        # Ajustar à precisão
         if q_prec == 0:
             adjusted_qty = int(adjusted_qty)
         else:
@@ -172,15 +171,20 @@ def validate_order_quantity(symbol, price, qty):
         return False, qty_final, "Quantidade <= 0"
     
     # 4. VALIDAÇÃO DE SALDO - Bybit bloqueia se não há margem suficiente
-    # Com alavancagem, calcula quanto de saldo é necessário
-    # Importante: Usa saldo TOTAL (não apenas disponível) para leverage calc
-    margin_needed = (price * qty_final) / 10.0  # Assumindo leverage 10x como máximo
+    # ⚠️ USAR CONSERVADOR: 50% do saldo disponível para evitar erro 110007
+    # Motivo: cache_balance pode estar desatualizado, posições abertas usam margem, fees, etc
     
-    # Considera posições abertas e adiciona buffer de segurança de 15%
-    available_for_new = cache_balance['avail'] * 0.85
+    # Com leverage calculado (pode ser 1x a 12x), calcular margem por posição
+    # Usar leverage máximo de 10x como padrão
+    available_for_new = cache_balance['avail'] * 0.5  # ⚠️ MUITO CONSERVADOR: 50%
+    
+    # Calcular margem necessária com leverage 10x
+    margin_needed = (price * qty_final) / 10.0
+    
+    log.debug(f"   [VALIDAÇÃO {symbol}] Margem: precisa={margin_needed:.2f}, available={available_for_new:.2f} (total={cache_balance['total']:.2f})")
     
     if margin_needed > available_for_new:
-        # Reduzir a quantidade proporcionalmente
+        # Reduzir drasticamente a quantidade
         qty_reduced = (available_for_new * 10.0) / price
         if q_prec == 0:
             qty_reduced = int(qty_reduced)
@@ -188,10 +192,13 @@ def validate_order_quantity(symbol, price, qty):
             qty_reduced = round(qty_reduced, q_prec)
         
         if qty_reduced <= 0:
-            return False, qty_final, f"Margem insuficiente: precisa {margin_needed:.2f}, disponível {available_for_new:.2f}"
+            reason = f"❌ Margem insuficiente: precisa {margin_needed:.2f} USDT, disponível {available_for_new:.2f} USDT"
+            log.warning(reason)
+            return False, qty_final, reason
         
-        qty_final = qty_reduced
-        return False, qty_final, f"Quantidade reduzida por margem: {qty:.2f} → {qty_final:.2f}"
+        reason = f"Quantidade reduzida: {qty:.2f} → {qty_reduced:.2f} (margem: precisa {margin_needed:.2f}, tem {available_for_new:.2f})"
+        log.info(f"⚠️ {symbol} {reason}")
+        return False, qty_reduced, reason
     
     return True, qty_final, "OK"
 
@@ -287,6 +294,8 @@ def execute_new_trade(symbol, signal, price, atr):
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         
         # 🛡️ VALIDAÇÃO DE QUANTIDADE ANTES DE ENVIAR
+        log.info(f"[{symbol}] Validando ordem: price={price:.6f}, qty={qty:.2f}")
+        log.info(f"   Saldo: total={cache_balance['total']:.2f}, avail={cache_balance['avail']:.2f}")
         is_valid_qty, validated_qty, reason = validate_order_quantity(symbol, price, qty)
         
         if not is_valid_qty:
@@ -299,6 +308,7 @@ def execute_new_trade(symbol, signal, price, atr):
         prepare_leverage(symbol, lev)
         
         # 9. Envio da Ordem com SL fixo e TP1 da cascata
+        log.info(f"📤 Tentando enviar ordem: {symbol} {side} qty={qty_str} price={price:.6f} (notional={float(qty_str)*price:.2f} USDT)")
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 
@@ -569,6 +579,8 @@ def check_market_heat():
             atr_pct = tr.rolling(14).mean().iloc[-1] / recent['close'].iloc[-1]
             if pd.isna(atr_pct):
                 continue
+            # 🔧 CORREÇÃO: atr_pct já é decimal (0.00086), multiplicar por 100 pra exibir como %
+            atr_pct_display = atr_pct * 100
             pct = (atr_pct / threshold) * 100 if threshold > 0 else 0
             
             if regime == "COLD":
@@ -584,7 +596,7 @@ def check_market_heat():
                 num_normal += 1
                 status = "✅ NORMAL"
             
-            log.info(f"{symbol:10} | ATR%: {atr_pct:.5f} ({pct:5.1f}%) | {status}")
+            log.info(f"{symbol:10} | ATR%: {atr_pct_display:.2f}% | Ratio: {pct:.1f}x | {status}")
     
     log.info("-------------------------------------")
     now_ts = time.time()
@@ -616,13 +628,6 @@ def start_bot():
             log.error(f"Erro Loop ({erros_seguidos}/5): {e}"); time.sleep(5)
             if erros_seguidos > 5: sys.exit(1)
 
-def debug_sanity_check():
-    log.info("🔍 --- TESTE DE SANIDADE ---")
-    for symbol in SYMBOLS:
-        strat = strategies.get(symbol)
-        if not strat: continue
-        log.info(f"{symbol}: Invert={getattr(strat, 'invert_signal', False)} | ATR={getattr(strat, 'atr_multiplier_sl', 1.8)}")
-
 if __name__ == "__main__": 
     log.info("📥 Warm-up Inicial...")
     log.info("✅ Stats resetados - WR check desativado")
@@ -653,5 +658,4 @@ if __name__ == "__main__":
     Thread(target=process_queue, daemon=True).start()
     ws = create_and_subscribe_websocket()
     sync_historical_pnl()
-    debug_sanity_check()
     start_bot()

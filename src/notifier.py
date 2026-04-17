@@ -45,13 +45,13 @@ class TelegramNotifier:
         status_fila = "⚠️ ATRASADO" if queue_size > 50 else "Normal"
 
         if ZoneInfo is not None:
-            horario_brasil = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime('%H:%M:%S')
+            horario_brasil = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime('%H:%M')
         else:
-            horario_brasil = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-3))).strftime('%H:%M:%S')
+            horario_brasil = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-3))).strftime('%H:%M')
     
         msg = (
             f"📊 *DASHBOARD DE PERFORMANCE*\n"
-            f"📅 Período: Desde {risk_mgr.reset_date_str}\n"
+            f"📅 Período: {risk_mgr.reset_date_str}\n"
             f"---\n"
             f"🏦 *Saldo USDT:* `${balance_total:.2f}`\n"
             f"💰 *PnL Líquido:* `${pnl_net:.2f}` {status_cor}\n"
