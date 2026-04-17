@@ -116,7 +116,7 @@ class TelegramNotifier:
             )
         
         signal_obj = signal.build()
-        return self.mack.notify_signal(signal_obj)
+        return self.send_message(signal_obj)
     
     def notify_entry_mack(self, symbol, side, entry, sl, tp, qty, leverage):
         """Notifica entrada de trade"""
