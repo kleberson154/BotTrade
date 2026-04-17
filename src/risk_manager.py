@@ -52,7 +52,11 @@ class RiskManager:
             "BTCUSDT": (3, 2), "ETHUSDT": (2, 2), "SOLUSDT": (1, 3),
             "LINKUSDT": (1, 3), "AVAXUSDT": (1, 3), "XRPUSDT": (1, 4),
             "ADAUSDT": (0, 4), "NEARUSDT": (1, 3), "DOTUSDT": (1, 3),  
-            "SUIUSDT": (1, 4), "OPUSDT": (1, 4), "DEFAULT": (1, 4)
+            "SUIUSDT": (1, 4), "OPUSDT": (1, 4), 
+            # 🆕 Novos símbolos com precisão ajustada
+            "RAVEUSDT": (1, 4), "LYNUSDT": (0, 4), "HYPEUSDT": (1, 4), 
+            "IRYSUSDT": (0, 4),
+            "DEFAULT": (1, 4)
         }
 
     # =========================================================

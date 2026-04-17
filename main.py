@@ -137,10 +137,72 @@ def handle_signal_logic(message):
 # 2. FUNÇÕES DE EXECUÇÃO E API
 # =========================================================
 
+def validate_order_quantity(symbol, price, qty):
+    """
+    ⚠️ VALIDAÇÃO DE SEGURANÇA - Evita erros 110007 e 10001
+    
+    Retorna: (é_válido, quantidade_ajustada, razão)
+    """
+    q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+    
+    # 1. NOTIONAL MÍNIMO BYBIT: ~5 USDT
+    notional = price * qty
+    min_notional = 5.0
+    
+    if notional < min_notional:
+        adjusted_qty = max(0.1, min_notional / price)
+        # Ajustar à precisão
+        if q_prec == 0:
+            adjusted_qty = int(adjusted_qty)
+        else:
+            adjusted_qty = round(adjusted_qty, q_prec)
+        
+        new_notional = price * adjusted_qty
+        if new_notional < min_notional:
+            return False, adjusted_qty, f"Notional {notional:.2f} USDT < mínimo {min_notional} USDT"
+    
+    # 2. PRECISÃO DE QUANTIDADE
+    if q_prec == 0:
+        qty_final = int(qty)
+    else:
+        qty_final = round(qty, q_prec)
+    
+    # 3. Quantidade positiva
+    if qty_final <= 0:
+        return False, qty_final, "Quantidade <= 0"
+    
+    # 4. VALIDAÇÃO DE SALDO - Bybit bloqueia se não há margem suficiente
+    # Com alavancagem, calcula quanto de saldo é necessário
+    # Importante: Usa saldo TOTAL (não apenas disponível) para leverage calc
+    margin_needed = (price * qty_final) / 10.0  # Assumindo leverage 10x como máximo
+    
+    # Considera posições abertas e adiciona buffer de segurança de 15%
+    available_for_new = cache_balance['avail'] * 0.85
+    
+    if margin_needed > available_for_new:
+        # Reduzir a quantidade proporcionalmente
+        qty_reduced = (available_for_new * 10.0) / price
+        if q_prec == 0:
+            qty_reduced = int(qty_reduced)
+        else:
+            qty_reduced = round(qty_reduced, q_prec)
+        
+        if qty_reduced <= 0:
+            return False, qty_final, f"Margem insuficiente: precisa {margin_needed:.2f}, disponível {available_for_new:.2f}"
+        
+        qty_final = qty_reduced
+        return False, qty_final, f"Quantidade reduzida por margem: {qty:.2f} → {qty_final:.2f}"
+    
+    return True, qty_final, "OK"
+
 def execute_new_trade(symbol, signal, price, atr):
     get_cached_data()
-    if len(cache_positions['data']) >= risk_mgr.max_positions: return
-    if cache_balance['avail'] < 5.0: return 
+    if len(cache_positions['data']) >= risk_mgr.max_positions: 
+        log.info(f"⏭️ {symbol} ignorado: posições máximas ({len(cache_positions['data'])}) alcançadas")
+        return
+    if cache_balance['avail'] < 5.0: 
+        log.warning(f"⏭️ {symbol} ignorado: saldo disponível {cache_balance['avail']:.2f} USDT < 5 USDT")
+        return 
 
     try:
         strat = strategies[symbol]
@@ -223,7 +285,16 @@ def execute_new_trade(symbol, signal, price, atr):
         tp1_price = strat.tp_cascade.tp_levels[0].tp_price
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
+        
+        # 🛡️ VALIDAÇÃO DE QUANTIDADE ANTES DE ENVIAR
+        is_valid_qty, validated_qty, reason = validate_order_quantity(symbol, price, qty)
+        
+        if not is_valid_qty:
+            log.warning(f"❌ {symbol} REJEITADO: Quantidade inválida - {reason}")
+            log.warning(f"   Calculada: {qty:.6f} | Ajustada: {validated_qty:.6f}")
+            return
+        
+        qty_str = str(int(validated_qty)) if q_prec == 0 else str(validated_qty)
 
         prepare_leverage(symbol, lev)
         
