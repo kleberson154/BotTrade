@@ -9,7 +9,6 @@ try:
 except ImportError:
     ZoneInfo = None
 
-from src.mack_notifier import MackNotifier
 from src.signal_formatter import TradeSignalBuilder, SignalProfile
 
 log = logging.getLogger(__name__)
@@ -19,9 +18,6 @@ class TelegramNotifier:
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.enabled = all([self.token, self.chat_id])
-        
-        # 🆕 Integração Mack
-        self.mack = MackNotifier()
 
     def send_message(self, text):
         if not self.enabled:
@@ -65,31 +61,9 @@ class TelegramNotifier:
     
         self.send_message(msg)
     
-    # =========================================================
-    # 🆕 MACK NOTIFIER - Notificações Profissionais
-    # =========================================================
-    # (Integração Mack será inicializada no __init__ acima)
-    
     def notify_signal_mack(self, symbol, side, entry, sl, tp, leverage, profile, strength, rationale, partials):
         """
         Envia sinal profissional no formato Mack
-        
-        Exemplo de entrada:
-        notify_signal_mack(
-            symbol="LABUSDT",
-            side="LONG",
-            entry=0.4818,
-            sl=0.437224,
-            tp=0.660105,
-            leverage=75,
-            profile="AGGRESSIVE",
-            strength=0.725,
-            rationale=["[TREND] ADX 31", "Vol 6.0x"],
-            partials=[
-                {"tp": 0.541235, "percent": 40, "action": "CLOSE_PARTIAL", "desc": "TP1"},
-                ...
-            ]
-        )
         """
         try:
             profile_enum = SignalProfile[profile.upper()]
@@ -117,42 +91,3 @@ class TelegramNotifier:
         
         signal_obj = signal.build()
         return self.send_message(signal_obj)
-    
-    def notify_entry_mack(self, symbol, side, entry, sl, tp, qty, leverage):
-        """Notifica entrada de trade"""
-        return self.mack.notify_trade_entry(
-            symbol=symbol,
-            side=side,
-            entry=entry,
-            sl=sl,
-            tp=tp,
-            qty=qty,
-            leverage=int(leverage),
-            profile="AGGRESSIVE",
-            strength=0.7
-        )
-    
-    def notify_exit_mack(self, symbol, side, entry, exit_price, method, pnl_usd, pnl_percent):
-        """Notifica saída de trade"""
-        return self.mack.notify_trade_exit(
-            symbol=symbol,
-            side=side,
-            entry=entry,
-            exit_price=exit_price,
-            exit_method=method,
-            pnl_usd=pnl_usd,
-            pnl_percent=pnl_percent
-        )
-    
-    def notify_violation_mack(self, rule_number, symbol, message, severity="WARNING"):
-        """Notifica violação de regra Mack"""
-        return self.mack.notify_compliance_violation(
-            rule_number=rule_number,
-            symbol=symbol,
-            message=message,
-            severity=severity
-        )
-    
-    def notify_compliance_report_mack(self):
-        """Envia relatório de compliance"""
-        return self.mack.notify_compliance_report()
