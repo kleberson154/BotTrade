@@ -397,8 +397,8 @@ def check_closed_trades():
 
 def sync_historical_pnl():
     try:
-        start_date_display = "2026-04-13"
-        start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d").timestamp() * 1000)
+        start_date_display = "2026-04-17 04:00:00"
+        start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
         log.info(f"🔄 Sincronizando histórico PnL desde {start_date_display} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
