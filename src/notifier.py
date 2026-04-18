@@ -9,7 +9,7 @@ try:
 except ImportError:
     ZoneInfo = None
 
-from src.signal_formatter import TradeSignalBuilder, SignalProfile
+from src.signal_formatter import TradeSignalBuilder, SignalProfile, SignalFormatter
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class TelegramNotifier:
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.enabled = all([self.token, self.chat_id])
+        self.formatter = SignalFormatter()  # ✅ Inicializar formatter
 
     def send_message(self, text):
         if not self.enabled:
@@ -90,4 +91,6 @@ class TelegramNotifier:
             )
         
         signal_obj = signal.build()
-        return self.send_message(signal_obj)
+        # ✅ CORRIGIDO: Usar formatter para converter TradeSignal em string antes de enviar
+        formatted_message = self.formatter.format_signal_for_notification(signal_obj)
+        return self.send_message(formatted_message)
