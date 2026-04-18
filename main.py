@@ -496,7 +496,7 @@ def check_closed_trades():
 
 def sync_historical_pnl():
     try:
-        start_date_display = "2026-04-18 02:20:00"
+        start_date_display = "2026-04-18 02:00:00"
         start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
