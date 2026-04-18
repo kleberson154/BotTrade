@@ -361,13 +361,13 @@ class TradingStrategy:
             if ind['rsi_1m'] < self.rsi_overbought:  # Apenas verifica RSI não está em exaustão
                 raw_signal = "BUY"
                 min_rec = self.data_1m['low'].tail(10).min()
-                dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.005)
+                dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.0025)
 
             # Condição de VENDA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
             elif ind['rsi_1m'] > self.rsi_oversold:  # Apenas verifica RSI não está em exaustão
                 raw_signal = "SELL"
                 max_rec = self.data_1m['high'].tail(10).max()
-                dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.005)
+                dist_sl = max(abs(max_rec * 1.001 - curr_price), curr_price * 0.0025)
 
             # 4. Filtros de Sentimento e Inversão
             final_signal = raw_signal
