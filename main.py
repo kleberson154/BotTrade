@@ -495,8 +495,25 @@ def check_closed_trades():
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
 def sync_historical_pnl():
-    try:
-        start_date_display = "2026-04-18 02:00:00"
+    try:        # 🔄 RESETAR STATS PARA EVITAR CONTAGEM DUPLICADA
+        # Se update_dashboard() foi chamado antes, limpar para só sincronizar histórico
+        risk_mgr.stats = {
+            'wins': 0,
+            'losses': 0,
+            'total_trades': 0,
+            'pnl_history': {},
+            'exit_methods': {
+                'tp_hit': 0,
+                'sl_hit': 0,
+                'sl_profit': 0,
+                'sl_loss': 0,
+                'manual_close': 0,
+                'other': 0
+            }
+        }
+        risk_mgr.total_pnl_bruto = 0.0
+        risk_mgr.total_fees = 0.0
+                start_date_display = "2026-04-18 03:00:00"
         start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
