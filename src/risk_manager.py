@@ -23,7 +23,8 @@ class RiskManager:
         self.performance = {}  # Rastreamento de performance por moeda
         
         # � Timestamp de reset dos stats
-        self.reset_date_str = "2026-04-18 03:00:00"
+        # 📌 Colocado no futuro para desabilitar sincronização de trades históricas
+        self.reset_date_str = "2026-04-19 00:00:00"
         
         # �💰 Balance sincronizado com Bybit
         self.account_balance = account_balance
