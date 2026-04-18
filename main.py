@@ -513,7 +513,7 @@ def sync_historical_pnl():
         }
         risk_mgr.total_pnl_bruto = 0.0
         risk_mgr.total_fees = 0.0
-                start_date_display = "2026-04-18 03:00:00"
+        start_date_display = "2026-04-18 03:00:00"
         start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
