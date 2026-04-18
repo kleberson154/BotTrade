@@ -172,12 +172,17 @@ def validate_order_quantity(symbol, price, qty):
         return False, qty_final, "Quantidade <= 0"
     
     # 4. VALIDAÇÃO DE SALDO - Bybit bloqueia se não há margem suficiente
-    # ⚠️ USAR CONSERVADOR: 50% do saldo disponível para evitar erro 110007
-    # Motivo: cache_balance pode estar desatualizado, posições abertas usam margem, fees, etc
+    # ⚠️ DISTRIBUIR SALDO entre posições restantes para evitar erro 110007
+    # Ao invés de usar 50% do saldo total, dividir entre slots de posições livres
     
-    # Com leverage calculado (pode ser 1x a 12x), calcular margem por posição
-    # Usar leverage máximo de 10x como padrão
-    available_for_new = cache_balance['avail'] * 0.5  # ⚠️ MUITO CONSERVADOR: 50%
+    # Slots disponíveis = max_positions - posições abertas
+    slots_livres = max(1, risk_mgr.max_positions - len(cache_positions['data']))
+    
+    # Cada slot recebe uma parcela do saldo disponível
+    # Usar 80% do saldo disponível dividido pelos slots
+    available_for_new = (cache_balance['avail'] * 0.8) / slots_livres
+    
+    log.debug(f"   [VALIDAÇÃO {symbol}] Slots livres: {slots_livres}, Margem por slot: {available_for_new:.2f}")
     
     # Calcular margem necessária com leverage 10x
     margin_needed = (price * qty_final) / 10.0
