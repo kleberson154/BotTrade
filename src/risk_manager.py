@@ -24,7 +24,7 @@ class RiskManager:
         
         # � Timestamp de reset dos stats
         # 📌 Colocado no futuro para desabilitar sincronização de trades históricas
-        self.reset_date_str = "2026-04-19 00:00:00"
+        self.reset_date_str = "2026-04-19 03:00:00"
         
         # �💰 Balance sincronizado com Bybit
         self.account_balance = account_balance
