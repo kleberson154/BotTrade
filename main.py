@@ -494,6 +494,7 @@ def sync_historical_pnl():
                         else: risk_mgr.stats['losses'] += 1
                         risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
                         risk_mgr.total_pnl_bruto += pnl_bruto
+                        risk_mgr.total_pnl += pnl_liquido
                         risk_mgr.total_fees += fees
                         processed_orders.add(order_id)
                         trades_count += 1

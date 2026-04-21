@@ -63,6 +63,8 @@ class RiskManager:
     def update_dashboard(self, symbol, pnl_liquido):
         self.stats['total_trades'] += 1
         
+        self.total_pnl += pnl_liquido
+        
         if pnl_liquido > 0.05:
             self.stats['wins'] += 1
             status = "WIN"
