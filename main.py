@@ -178,22 +178,28 @@ def validate_order_quantity(symbol, price, qty):
     log.debug(f"   [VALIDAÇÃO {symbol}] Margem: precisa={margin_needed:.2f}, available={available_for_new:.2f} (total={cache_balance['total']:.2f})")
     
     if margin_needed > available_for_new:
-        # Reduzir drasticamente a quantidade
-        qty_reduced = (available_for_new * 10.0) / price
-        if q_prec == 0:
-            qty_reduced = int(qty_reduced)
-        else:
-            qty_reduced = round(qty_reduced, q_prec)
-        
-        if qty_reduced <= 0:
-            reason = f"❌ Margem insuficiente: precisa {margin_needed:.2f} USDT, disponível {available_for_new:.2f} USDT"
-            log.warning(reason)
-            return False, qty_final, reason
-        
-        reason = f"Quantidade reduzida: {qty:.2f} → {qty_reduced:.2f} (margem: precisa {margin_needed:.2f}, tem {available_for_new:.2f})"
-        log.info(f"⚠️ {symbol} {reason}")
-        return False, qty_reduced, reason
-    
+            # Reduzir a quantidade até a margem disponível
+            qty_reduced = (available_for_new * 10.0) / price
+            if q_prec == 0:
+                qty_reduced = int(qty_reduced)
+            else:
+                qty_reduced = round(qty_reduced, q_prec)
+            
+            if qty_reduced <= 0:
+                reason = f"❌ Margem insuficiente: precisa {margin_needed:.2f} USDT, disponível {available_for_new:.2f} USDT"
+                log.warning(reason)
+                return False, qty_final, reason
+            
+            # Se a quantidade reduzida ainda atende o mínimo de notional, aceitar a ordem ajustada
+            adjusted_notional = price * qty_reduced
+            if adjusted_notional < min_notional:
+                reason = f"❌ Quantidade reduzida muito baixa: notional {adjusted_notional:.2f} USDT < mínimo {min_notional} USDT"
+                log.warning(reason)
+                return False, qty_final, reason
+            
+            reason = f"Quantidade reduzida: {qty:.2f} → {qty_reduced:.2f} (margem: precisa {margin_needed:.2f}, tem {available_for_new:.2f})"
+            log.info(f"⚠️ {symbol} {reason}")
+            return True, qty_reduced, reason
     return True, qty_final, "OK"
 
 def execute_new_trade(symbol, signal, price, atr):
