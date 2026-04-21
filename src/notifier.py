@@ -9,7 +9,7 @@ try:
 except ImportError:
     ZoneInfo = None
 
-from src.signal_formatter import TradeSignalBuilder, SignalProfile
+from src.signal_formatter import SignalFormatter, TradeSignalBuilder, SignalProfile
 
 log = logging.getLogger(__name__)
 
@@ -18,9 +18,11 @@ class TelegramNotifier:
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.enabled = all([self.token, self.chat_id])
+        self.formatter = SignalFormatter()
 
     def send_message(self, text):
         if not self.enabled:
+            log.warning("Telegram notifier desabilitado: token ou chat_id ausente")
             return
         
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
@@ -29,7 +31,7 @@ class TelegramNotifier:
         try:
             requests.post(url, json=payload)
         except Exception as e:
-            print(f"⚠️ Erro ao enviar Telegram: {e}")
+            log.error(f"⚠️ Erro ao enviar Telegram: {e}")
             
     def send_heartbeat(self, risk_mgr, cache_balance, message_queue):
         total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
@@ -90,7 +92,8 @@ class TelegramNotifier:
             )
         
         signal_obj = signal.build()
-        return self.send_message(signal_obj)
+        formatted_message = self.formatter.format_signal_for_notification(signal_obj)
+        return self.send_message(formatted_message)
     
     def notify_trade_closed(self, trade_data):
         """
