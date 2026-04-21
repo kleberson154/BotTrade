@@ -10,7 +10,6 @@ class ExecutionManager:
         
         # 🆕 Gerenciamento SMC (Múltiplos TPs)
         self.tp_managers = {}  # {symbol: SMCTPManager}
-        self.active_sessions = {}  # {symbol: TradingSession}
         
         # 📊 FIBONACCI MANAGER (Estratégia 1: Better Targets)
         self.fib_manager = FibonacciManager(atr_pct=0.005)

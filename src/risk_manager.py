@@ -19,8 +19,6 @@ class RiskManager:
         self.total_pnl_bruto = 0.0
         self.total_pnl = 0.0  # PnL acumulado total
         self.total_fees = 0.0
-        self.trades_history = []
-        self.performance = {}  # Rastreamento de performance por moeda
         
         # � Timestamp de reset dos stats
         self.reset_date_str = "2026-04-20 03:00:00"
@@ -79,7 +77,7 @@ class RiskManager:
         total = self.stats["total_trades"]
         wins = self.stats["wins"]
         win_rate = (wins / total * 100) if total > 0 else 0
-        pnl_net = sum(self.stats["pnl_history"].values())
+        pnl_net = self.total_pnl
         
         # Calcula proteção (SL hits vs total) e taxa de sucesso
         sl_hits = self.stats['exit_methods'].get('sl_hit', 0)
@@ -87,26 +85,6 @@ class RiskManager:
         success_rate = win_rate  # Mesmo que win_rate (% de trades lucrativos)
         
         return total, wins, protection_rate, win_rate, success_rate, pnl_net
-    
-    def add_historical_trade(self, symbol, pnl_net):
-        if symbol not in self.performance:
-            self.performance[symbol] = []
-            self.performance[symbol].append(pnl_net)
-            self.total_pnl += pnl_net
-    
-    def add_trade_result(self, symbol, pnl_bruto, fees):
-        pnl_net = pnl_bruto - fees
-        self.total_pnl_bruto += pnl_bruto
-        self.total_fees += fees
-        
-        trade_data = {
-            'symbol': symbol,
-            'pnl_net': pnl_net,
-            'is_win': pnl_net > 0,
-            'timestamp': datetime.datetime.now()
-        }
-        self.trades_history.append(trade_data)
-        return pnl_net
 
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)

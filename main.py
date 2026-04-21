@@ -34,10 +34,7 @@ API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 _mode = os.getenv("BYBIT_MODE", "demo").lower()
 IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
-SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT,ETHUSDT,AVAXUSDT,SOLUSDT,ADAUSDT,DOTUSDT").split(",")
-ULTIMO_CHECK_VIVO = 0 
-SALDO_INICIAL_DIA = None
-ULTIMO_ORDER_ID_PROCESSADO = None
+SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
 ULTIMO_CHECK_CALOR = 0
 LAST_HOLD_LOG = {}
 LAST_REGIME_LOG = 0
@@ -60,13 +57,7 @@ for symbol in SYMBOLS:
 log = setup_logger()
 risk_mgr = RiskManager(account_balance=100.0)  # Será atualizado após primeira leitura de balance
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
-executor = ExecutionManager(session)
 message_queue = Queue()
-
-MASTERS = ["BTCUSDT"]  # Only master signals from active coins
-for m in MASTERS:
-    if m not in strategies:
-        strategies[m] = TradingStrategy(symbol=m, notifier=notifier)
 
 cache_balance = {"total": 0, "avail": 0, "last_update": 0}
 cache_positions = {"data": [], "last_update": 0}
@@ -391,7 +382,7 @@ def update_remote_sl(symbol, new_sl):
 def get_market_sentiment():
     try:
         results = []
-        for symbol in ["BTCUSDT", "XRPUSDT"]:  # Updated: use only active coins (BTC + XRP)
+        for symbol in ["BTCUSDT"]:  # Bitcoin only
             strat = strategies.get(symbol)
             if strat is None or strat.data_15m is None or len(strat.data_15m) < 20: continue
             df = strat.data_15m
@@ -470,8 +461,12 @@ def check_closed_trades():
             order_id = last_trade['orderId']
             if order_id != ULTIMO_ORDER_ID_PROCESSADO:
                 pnl = float(last_trade['closedPnl'])
-                risk_mgr.update_dashboard(last_trade['symbol'], pnl)
+                symbol = last_trade['symbol']
+                risk_mgr.update_dashboard(symbol, pnl)
                 ULTIMO_ORDER_ID_PROCESSADO = order_id
+                # ✅ Notificar trade fechado
+                notifier.notify_trade_closed(last_trade)
+                log.info(f"📢 Notificação enviada para trade fechado em {symbol}")
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
 def sync_historical_pnl():

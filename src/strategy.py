@@ -15,8 +15,8 @@ log = logging.getLogger(__name__)
 
 
 def get_leverage_for_symbol(symbol: str) -> int:
-    """⚡ Leverage dinâmico: 10x para BTC/ETH, 5x para outros"""
-    return 10 if symbol in ["BTCUSDT", "ETHUSDT"] else 5
+    """⚡ Leverage 10x para BTC"""
+    return 10  # BTC only configuration
 
 class TradingStrategy:
     def __init__(self, symbol, notifier):
@@ -33,15 +33,14 @@ class TradingStrategy:
         self.base_leverage = get_leverage_for_symbol(symbol)  # 5x ou 10x
         
         # 📊 PARÂMETROS DE ENTRADA (Scalping - Modo Agressivo)
-        self.ema_1m_trend = 20
-        self.ema_15m_period = 200
         self.min_15m_candles = 200
         self.min_adx = 1                    # MÍNIMO ABSOLUTO: 1 (praticamente desativado)
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
-        self.allow_long = True
-        self.allow_short = True
+        # 🔧 Filtros e controles
+        self.use_regime_filter = False      # Desativado por enquanto
+        self.invert_signal = False          # Desativado por enquanto
         
         # Regime-aware parameters
         self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
@@ -49,32 +48,24 @@ class TradingStrategy:
             "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
             "volume_multiplier": 0.5,        # 50% de média
             "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.5,        # SL mais apertado
-            "leverage": 5.0,                 # alavancagem reduzida
             "require_volume_peak": False,    # Desativado
         }
         self.regime_params_lateral = {
             "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
             "volume_multiplier": 0.7,        # 70% de média
             "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.3,
-            "leverage": 3.0,                 # alavancagem baixa
             "require_volume_peak": False,    # Desativado
         }
         self.regime_params_normal = {
             "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
             "volume_multiplier": 0.8,        # 80% de média
             "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 1.8,
-            "leverage": 10.0,
             "require_volume_peak": False,    # Desativado
         }
         self.regime_params_hot = {
             "min_volatilidade_pct": 0.00001,  # EXTREMAMENTE RELAXADO: 0.001%
             "volume_multiplier": 1.0,        # 100% de média
             "min_adx": 1,                    # MÍNIMO: 1
-            "atr_multiplier_sl": 2.2,        # SL mais largo em volatilidade extrema
-            "leverage": 12.0,                # Reduzido de 15 para 12
             "require_volume_peak": False,    # Desativado
         }
         
@@ -98,9 +89,6 @@ class TradingStrategy:
         self.position_sizer = PositionSizer()
         self.last_trade_signal = None
         self.account_balance = 100.0  # Será atualizado via main.py
-        
-        # Risco fixo em 2% (disciplinado conforme Mack)
-        self.risk_percent = 1.00  # SEMPRE 2%
         
         # =========================================================
         # FIBONACCI MANAGER (Estratégias 1, 2, 3)
@@ -224,28 +212,21 @@ class TradingStrategy:
         results['market_regime'] = self.current_regime
 
         # M1 Indicators
-        results['ema_20_1m'] = TechnicalIndicators.calculate_ema(df_1m['close'], 20).iloc[-1]
         results['rsi_1m'] = TechnicalIndicators.calculate_rsi(df_1m['close']).iloc[-1]
         results['adx_1m'] = TechnicalIndicators.calculate_adx(df_1m).iloc[-1]
         
         # ATR para volatilidade
         results['atr_pct'] = TechnicalIndicators.calculate_atr_pct(df_1m)
         
-        # Volume Divergence: Confirma se volume está apoiando a direção do preço
-        # Retorna True se volume está CRESCENDO na última vela (suporta movimento de preço)
+        # Volume Divergence
         if len(df_1m) >= 5:
             vol_recent = df_1m['volume'].iloc[-1]
             vol_avg5 = df_1m['volume'].iloc[-5:-1].mean()
-            vol_trend = vol_recent > vol_avg5  # True se volume increasing
-            
-            # Calcula também o momentum de volume (aceleração)
             vol_momentum = vol_recent / vol_avg5 if vol_avg5 > 0 else 1.0
-            
-            # CORRIGIDO: apenas checar momentum (vol_trend sempre False se momentum < 1.0 por definição)
             results['volume_divergence_ok'] = vol_momentum > 0.40  # Mínimo 40% de momentum
             results['volume_momentum'] = vol_momentum
         else:
-            results['volume_divergence_ok'] = True  # Se dados insuficientes, permite
+            results['volume_divergence_ok'] = True
             results['volume_momentum'] = 1.0
         
         return results
@@ -329,37 +310,19 @@ class TradingStrategy:
             pico_vol = curr_vol > (avg_vol * adjusted_volume_multiplier)
             volat_ok = ind['atr_pct'] >= self.min_volatilidade_pct
             tendencia_forte = ind['adx_1m'] >= adjusted_min_adx
-            volume_confirmado = True  # ✅ DESATIVADO COMPLETAMENTE: sem restrição de volume
+            volume_confirmado = True  # DESATIVADO: sem restrição de volume
             
-            # 🔥 MODO SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
+            # Modo SIGNAL-FIRST para regimes frios: relaxa volume se há sinal técnico
             if not self.require_volume_peak and tendencia_forte and ind['atr_pct'] >= 0.0005:
-                # Em COLD/LATERAL: volume não é obrigatório, permite entrada por rompimento puro
                 pico_vol = True
 
-            # ✅ REMOVIDO: sem mais verificações, vai direto para lógica de BUY/SELL
-            # Anteriormente checava: if not (tendencia_forte and volat_ok): return "HOLD"
-            # Agora apenas processa sinais de RSI
-
-            # M15 Context
-            m15_last = self.data_15m.iloc[-1]
-            m15_is_green = m15_last['close'] > m15_last['open']
-            m15_is_red = m15_last['close'] < m15_last['open']
-            
-            # Respiro/Máximas
-            max_15m = self.data_1m['high'].iloc[-16:-1].max()
-            min_15m = self.data_1m['low'].iloc[-16:-1].min()
-            
-            # ✅ DESATIVADO: Clean Breakout filter - aceita qualquer preço > EMA200
-            is_clean_breakout_up = True  # Aceita sempre
-            is_clean_breakout_down = True  # Aceita sempre
-
-            # Condição de COMPRA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
+            # Condição de COMPRA - SIMPLIFICADA: apenas RSI check
             if ind['rsi_1m'] < self.rsi_overbought:  # Apenas verifica RSI não está em exaustão
                 raw_signal = "BUY"
                 min_rec = self.data_1m['low'].tail(10).min()
                 dist_sl = max(abs(curr_price - min_rec * 0.999), curr_price * 0.015)
 
-            # Condição de VENDA - ✅ TOTALMENTE SIMPLIFICADA: apenas RSI check
+            # Condição de VENDA - SIMPLIFICADA: apenas RSI check
             elif ind['rsi_1m'] > self.rsi_oversold:  # Apenas verifica RSI não está em exaustão
                 raw_signal = "SELL"
                 max_rec = self.data_1m['high'].tail(10).max()
@@ -367,11 +330,6 @@ class TradingStrategy:
 
             # 4. Filtros de Sentimento e Inversão
             final_signal = raw_signal
-            # ✅ REMOVIDO: Bloqueios de sentimento/allow_long/allow_short desativados
-            # if final_signal == "BUY" and (not self.allow_long or (market_sentiment == "BEARISH"...)):
-            #     final_signal = "HOLD"
-            # if final_signal == "SELL" and (not self.allow_short or (market_sentiment == "BULLISH"...)):
-            #     final_signal = "HOLD"
 
             if final_signal != "HOLD" and self.invert_signal:
                 old = final_signal
@@ -384,17 +342,8 @@ class TradingStrategy:
                     motivos.append(f"adx={ind['adx_1m']:.1f}<{adjusted_min_adx:.1f}(base={self.min_adx:.1f}x{cycle_mult_adx:.2f})")
                 if not volat_ok:
                     motivos.append(f"atr%={ind['atr_pct']:.4f}<{self.min_volatilidade_pct}")
-                # ✅ REMOVIDO: pico_vol check
-                # if not pico_vol:
-                #     motivos.append(f"vol={curr_vol:.2f}<x{adjusted_volume_multiplier:.2f}(base={self.volume_multiplier:.2f}x{cycle_mult_vol:.2f})*avg({avg_vol:.2f})")
-                # ✅ REMOVIDO: volume_confirmado check desativado
-                # if not volume_confirmado:
-                #     vol_momentum = ind.get('volume_momentum', 1.0)
-                #     motivos.append(f"vol_divergence (momentum={vol_momentum:.2f})")
-                # if len(motivos) == 0:
-                #     motivos.append("sem clean breakout ou RSI exaustao")
                 if len(motivos) == 0:
-                    motivos.append("sem sinal técnico claro (ADX baixo, RSI neutro, sem breakout)")
+                    motivos.append("sem sinal técnico claro (ADX baixo, RSI neutro)")
                 self.last_hold_reason = " | ".join(motivos)
             elif final_signal != "HOLD":
                 self.last_hold_reason = (
@@ -453,128 +402,102 @@ class TradingStrategy:
                     
                     self.last_score_result = score_result
                     
-                    if True:  # ✅ REMOVIDO: Score check desativado - aceita todos os sinais
-                        # Código antigo:
-                        # if not score_result["triggered"]:
-                        #     final_signal = "HOLD"
-                        # ✅ Score aprovado, criar TradeSignal COM CASCATA DE TPS
-                        try:
-                            # ====== CASCATA DE TPS REALISTA ======
-                            # 1. Criar gerenciador de cascata
-                            self.tp_cascade = TPCascadeManager(
-                                symbol=self.symbol,
-                                side="LONG" if final_signal == "BUY" else "SHORT",
-                                entry=curr_price,
-                                initial_sl=sl_price,
-                                account_balance=self.account_balance,
-                                leverage=self.base_leverage
-                            )
-                            
-                            # 2. Calcular TPs realistas baseado em volatilidade
-                            market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
-                            self.tp_cascade.calculate_scalp_tps(
-                                market_volatility=market_volatility
-                            )
-                            
-                            # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
-                            qty = self.position_sizer.calculate_qty(
-                                account_balance=self.account_balance,
-                                entry_price=curr_price,
-                                sl_price=sl_price,
-                                risk_percent=0.02,  # FIXO EM 2% SEMPRE
-                                side="LONG" if final_signal == "BUY" else "SHORT"
-                            )
-                            
-                            # 4. Validar alavancagem
-                            leverage_ok = True  # ✅ REMOVIDO: Leverage check desativado - aceita qualquer quantidade
-                            
-                            if not leverage_ok:  # Nunca será True (desativado)
-                                pass
-                                # ====== REJEIÇÃO 11: LEVERAGE EXCEDIDO ======
-                                self._log_trade_decision(
-                                    "REJEITADO", final_signal,
-                                    {
-                                        "reason": "Alavancagem excedida (>10x com 2% risk)",
-                                        "details": f"Qty calculada: {qty:.4f} | Saldo: ${self.account_balance:.2f}"
-                                    },
-                                    {
-                                        "adx": ind['adx_1m'],
-                                        "rsi": ind['rsi_1m'],
-                                        "atr_pct": ind['atr_pct'],
-                                        "vol": curr_vol
-                                    }
-                                )
-                                final_signal = "HOLD"
-                                self.last_hold_reason = "Leverage excedido (>10x) com 2% risk"
-                            else:
-                                # 5. Criar TradeSignal (com TP1 como referência)
-                                tp1_price = self.tp_cascade.tp_levels[0].tp_price
-                                signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
-                                    .with_stops(sl_price, tp1_price)
-                                    .with_leverage(10)
-                                    .with_profile(SignalProfile.BALANCED)
-                                    .build())
-                                
-                                self.last_trade_signal = signal
-                                
-                                # 6. Fibonacci boost (se aplicável)
-                                max_15m = self.data_1m['high'].iloc[-16:-1].max()
-                                min_15m = self.data_1m['low'].iloc[-16:-1].min()
-                                
-                                fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
-                                    curr_price, curr_price, max_15m, min_15m, final_signal
-                                )
-                                
-                                self.fibo_confidence = fibo_confidence['confidence_boost']
-                                self.fibo_targets = self.fib_manager.calculate_targets_fibo(
-                                    curr_price, final_signal, max_15m, min_15m, 
-                                    atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
-                                )
-                                
-                                # ✅ ====== TRADE ACEITO ======
-                                self._log_trade_decision(
-                                    "ACEITADO", final_signal,
-                                    {
-                                        "reason": "Todos os critérios validados com sucesso",
-                                        "details": (
-                                            f"Entry: ${curr_price:.8f} | "
-                                            f"SL: ${sl_price:.8f} | "
-                                            f"TP1/TP2/TP3: ${self.tp_cascade.tp_levels[0].tp_price:.8f} / "
-                                            f"${self.tp_cascade.tp_levels[1].tp_price:.8f} / "
-                                            f"${self.tp_cascade.tp_levels[2].tp_price:.8f} | "
-                                            f"Qty: {qty:.4f} | "
-                                            f"RR: {validate_result['ratio']}:1 | "
-                                            f"Score: {score_result['score']}/{score_result['total_indicators']} | "
-                                            f"Regime: {self.current_regime} | "
-                                            f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f}%)"
-                                        )
-                                    },
-                                    {
-                                        "adx": ind['adx_1m'],
-                                        "rsi": ind['rsi_1m'],
-                                        "atr_pct": ind['atr_pct'],
-                                        "vol": curr_vol
-                                    }
-                                )
+                    # Score aprovado, criar TradeSignal COM CASCATA DE TPS
+                    try:
+                        # ====== CASCATA DE TPS REALISTA ======
+                        # 1. Criar gerenciador de cascata
+                        self.tp_cascade = TPCascadeManager(
+                            symbol=self.symbol,
+                            side="LONG" if final_signal == "BUY" else "SHORT",
+                            entry=curr_price,
+                            initial_sl=sl_price,
+                            account_balance=self.account_balance,
+                            leverage=self.base_leverage
+                        )
                         
-                        except Exception as e:
-                            # ====== REJEIÇÃO 12: ERRO NO SETUP ======
-                            self._log_trade_decision(
-                                "REJEITADO", final_signal,
-                                {
-                                    "reason": f"Erro ao configurar posição",
-                                    "details": f"Erro: {str(e)[:100]}"
-                                },
-                                {
-                                    "adx": ind['adx_1m'],
-                                    "rsi": ind['rsi_1m'],
-                                    "atr_pct": ind['atr_pct'],
-                                    "vol": curr_vol
-                                }
-                            )
-                            log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
-                            final_signal = "HOLD"
-                            self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
+                        # 2. Calcular TPs realistas baseado em volatilidade
+                        market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
+                        self.tp_cascade.calculate_scalp_tps(
+                            market_volatility=market_volatility
+                        )
+                        
+                        # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
+                        qty = self.position_sizer.calculate_qty(
+                            account_balance=self.account_balance,
+                            entry_price=curr_price,
+                            sl_price=sl_price,
+                            risk_percent=0.02,  # FIXO EM 2% SEMPRE
+                            side="LONG" if final_signal == "BUY" else "SHORT"
+                        )
+                        
+                        # 4. Criar TradeSignal (com TP1 como referência)
+                        tp1_price = self.tp_cascade.tp_levels[0].tp_price
+                        signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
+                            .with_stops(sl_price, tp1_price)
+                            .with_leverage(10)
+                            .with_profile(SignalProfile.BALANCED)
+                            .build())
+                        
+                        self.last_trade_signal = signal
+                        
+                        # 5. Fibonacci boost (se aplicável)
+                        max_15m = self.data_1m['high'].iloc[-16:-1].max()
+                        min_15m = self.data_1m['low'].iloc[-16:-1].min()
+                        
+                        fibo_confidence = self.fib_manager.get_fibo_confidence_boost(
+                            curr_price, curr_price, max_15m, min_15m, final_signal
+                        )
+                        
+                        self.fibo_confidence = fibo_confidence['confidence_boost']
+                        self.fibo_targets = self.fib_manager.calculate_targets_fibo(
+                            curr_price, final_signal, max_15m, min_15m, 
+                            atr=ind['atr_pct'] * curr_price  # Converter percentual para absoluto
+                        )
+                        
+                        # ✅ ====== TRADE ACEITO ======
+                        self._log_trade_decision(
+                            "ACEITADO", final_signal,
+                            {
+                                "reason": "Todos os critérios validados com sucesso",
+                                "details": (
+                                    f"Entry: ${curr_price:.8f} | "
+                                    f"SL: ${sl_price:.8f} | "
+                                    f"TP1/TP2/TP3: ${self.tp_cascade.tp_levels[0].tp_price:.8f} / "
+                                    f"${self.tp_cascade.tp_levels[1].tp_price:.8f} / "
+                                    f"${self.tp_cascade.tp_levels[2].tp_price:.8f} | "
+                                    f"Qty: {qty:.4f} | "
+                                    f"RR: {validate_result['ratio']}:1 | "
+                                    f"Score: {score_result['score']}/{score_result['total_indicators']} | "
+                                    f"Regime: {self.current_regime} | "
+                                    f"Fibo: {fibo_confidence['nearest_level']} (+{fibo_confidence['confidence_boost']:+.2f}%)"
+                                )
+                            },
+                            {
+                                "adx": ind['adx_1m'],
+                                "rsi": ind['rsi_1m'],
+                                "atr_pct": ind['atr_pct'],
+                                "vol": curr_vol
+                            }
+                        )
+                    
+                    except Exception as e:
+                        # ====== REJEIÇÃO 12: ERRO NO SETUP ======
+                        self._log_trade_decision(
+                            "REJEITADO", final_signal,
+                            {
+                                "reason": f"Erro ao configurar posição",
+                                "details": f"Erro: {str(e)[:100]}"
+                            },
+                            {
+                                "adx": ind['adx_1m'],
+                                "rsi": ind['rsi_1m'],
+                                "atr_pct": ind['atr_pct'],
+                                "vol": curr_vol
+                            }
+                        )
+                        log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
+                        final_signal = "HOLD"
+                        self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
 
             return final_signal, dist_sl
 
@@ -675,13 +598,6 @@ class TradingStrategy:
             f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
             f"{self.tp_cascade.tp_levels[2].tp_price:.8f}"
         )
-    
-    def get_score_message(self) -> str:
-        """Retorna mensagem formatada de score para Telegram"""
-        if not self.last_score_result:
-            return "Nenhum score calculado"
-        
-        return self.indicator_scorer.get_telegram_message(self.side or "BUY")
 
     def load_historical_data(self, timeframe, candles):
         target = self.candles_1m if timeframe == "1m" else self.candles_15m

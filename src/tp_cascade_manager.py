@@ -34,8 +34,7 @@ class CascadeTPLevel:
     close_percent: float                 # % da posição a fechar (50%, 30%, 20%)
     sl_move_to: Optional[float] = None   # Novo SL após fechar este TP
     status: TPStatus = TPStatus.PENDING
-    closed_at_time: Optional[str] = None
-    closed_at_price: Optional[float] = None
+
 
 
 class TPCascadeManager:
@@ -124,8 +123,6 @@ class TPCascadeManager:
     def _process_hit(self, tp: CascadeTPLevel, price: float) -> Dict:
         """Processa TP atingido: marca, atualiza SL, registra"""
         tp.status = TPStatus.HIT
-        tp.closed_at_time = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-        tp.closed_at_price = price
         
         # Atualizar estado
         self.closed_percent += tp.close_percent
@@ -145,11 +142,3 @@ class TPCascadeManager:
         
         return {"tp_hit": tp.tp_num, "close_pct": tp.close_percent, 
                 "new_sl": self.current_sl, "action": "CLOSE_PARTIAL"}
-    
-    def cancel(self) -> None:
-        """Cancela cascata (SL acionado)"""
-        for tp in self.tp_levels:
-            if tp.status == TPStatus.PENDING:
-                tp.status = TPStatus.CANCELLED
-        self.status = "CANCELLED"
-        log.info(f"🛑 [{self.symbol}] Cascata cancelada")

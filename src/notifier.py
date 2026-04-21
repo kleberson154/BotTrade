@@ -91,3 +91,61 @@ class TelegramNotifier:
         
         signal_obj = signal.build()
         return self.send_message(signal_obj)
+    
+    def notify_trade_closed(self, trade_data):
+        """
+        Notifica quando uma trade é fechada (SL ou TP)
+        
+        Args:
+            trade_data: dict com dados da trade fechada
+                - symbol: str (ex: BTCUSDT)
+                - side: str (BUY ou SELL)
+                - qty: str ou float (quantidade)
+                - avgEntryPrice: str ou float (preço de entrada)
+                - avgExitPrice: str ou float (preço de saída)
+                - closedPnl: str ou float (PnL em USDT)
+                - cumEntryValue: str ou float (valor acumulado entrada)
+                - cumExitValue: str ou float (valor acumulado saída)
+        """
+        try:
+            symbol = trade_data.get('symbol', 'UNKNOWN')
+            side = trade_data.get('side', 'BUY')
+            qty = float(trade_data.get('qty', 0))
+            entry_price = float(trade_data.get('avgEntryPrice', 0))
+            exit_price = float(trade_data.get('avgExitPrice', 0))
+            pnl = float(trade_data.get('closedPnl', 0))
+            
+            # Calcular taxa (estimativa: 0.06% por lado = 0.12% total)
+            cum_entry = float(trade_data.get('cumEntryValue', 0))
+            cum_exit = float(trade_data.get('cumExitValue', 0))
+            fees = (cum_entry + cum_exit) * 0.0006
+            pnl_net = pnl - fees
+            
+            # Determinar emoji e tipo de fechamento
+            win_emoji = "✅" if pnl_net > 0 else "❌"
+            side_emoji = "📈" if side == "BUY" else "📉"
+            
+            # Calcular movimento
+            if side == "BUY":
+                movimento = ((exit_price - entry_price) / entry_price) * 100
+            else:
+                movimento = ((entry_price - exit_price) / entry_price) * 100
+            
+            movimento_str = f"{movimento:+.2f}%" if movimento != 0 else "0%"
+            
+            msg = (
+                f"{win_emoji} *TRADE FECHADO*\n"
+                f"---\n"
+                f"{side_emoji} *{symbol}* {side}\n"
+                f"📊 Qty: `{qty}`\n"
+                f"💵 Entrada: `${entry_price:.2f}`\n"
+                f"🎯 Saída: `${exit_price:.2f}` ({movimento_str})\n"
+                f"---\n"
+                f"💰 *PnL Bruto:* `${pnl:+.2f}`\n"
+                f"💸 *Taxas:* `-${fees:.2f}`\n"
+                f"📈 *PnL Líquido:* `${pnl_net:+.2f}` {win_emoji}\n"
+            )
+            
+            self.send_message(msg)
+        except Exception as e:
+            log.error(f"Erro ao notificar trade fechado: {e}")
