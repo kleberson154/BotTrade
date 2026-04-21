@@ -14,7 +14,7 @@ class RiskManager:
     # =========================================================
     def __init__(self, account_balance: float = 100.0):
         """Inicializa RiskManager com saldo da conta Bybit"""
-        self.max_positions = 5  # Aumentado para 15 moedas, banca 120 USDT
+        self.max_positions = 1  # Alterado para usar 100% do capital por trade
         self.fixed_leverage = 10.0  # Leverage base (será ajustada por regime)
         self.total_pnl_bruto = 0.0
         self.total_pnl = 0.0  # PnL acumulado total

@@ -319,10 +319,8 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.current_qty = float(qty)
             strat.partial_taken = False
             
-            # Log dos 3 TPs
+            # Log do TP1
             tp1 = strat.tp_cascade.tp_levels[0].tp_price
-            tp2 = strat.tp_cascade.tp_levels[1].tp_price
-            tp3 = strat.tp_cascade.tp_levels[2].tp_price
             
             tp1_pct = abs((tp1 - price) / price) * 100
             
@@ -345,9 +343,7 @@ def execute_new_trade(symbol, signal, price, atr):
                     f"[SCORE] {score_info.get('score', 0)}/{score_info.get('total_indicators', 0)}"
                 ],
                 partials=[
-                    {"tp": tp1, "percent": 50, "action": "CLOSE_PARTIAL", "desc": "TP1"},
-                    {"tp": tp2, "percent": 30, "action": "CLOSE_PARTIAL", "desc": "TP2"},
-                    {"tp": tp3, "percent": 20, "action": "CLOSE_FINAL", "desc": "TP3"},
+                    {"tp": tp1, "percent": 100, "action": "CLOSE_FINAL", "desc": "TP1"},
                 ]
             )
     except Exception as e:

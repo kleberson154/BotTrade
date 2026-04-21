@@ -89,13 +89,9 @@ class TPCascadeManager:
         }
     
     def _add_levels(self, tps: Dict, config: Dict) -> None:
-        """Adiciona 3 níveis: 50%, 30%, 20%"""
-        # TP1: fecha 50%, SL vai para entry (zero risk)
-        self._add_tp(1, tps["tp1"], 50.0, self.entry)
-        # TP2: fecha 30%, SL vai para TP1 (ganho garantido)
-        self._add_tp(2, tps["tp2"], 30.0, tps["tp1"])
-        # TP3: fecha 20%, SL vai para TP2 (proteção)
-        self._add_tp(3, tps["tp3"], 20.0, tps["tp2"])
+        """Adiciona 1 nível: TP1 com 100% da posição"""
+        # TP1: fecha 100%
+        self._add_tp(1, tps["tp1"], 100.0, self.entry)
     
     def _add_tp(self, num: int, price: float, pct: float, new_sl: float) -> None:
         """Adiciona um TP individual"""

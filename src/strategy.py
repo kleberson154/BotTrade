@@ -462,9 +462,7 @@ class TradingStrategy:
                                 "details": (
                                     f"Entry: ${curr_price:.8f} | "
                                     f"SL: ${sl_price:.8f} | "
-                                    f"TP1/TP2/TP3: ${self.tp_cascade.tp_levels[0].tp_price:.8f} / "
-                                    f"${self.tp_cascade.tp_levels[1].tp_price:.8f} / "
-                                    f"${self.tp_cascade.tp_levels[2].tp_price:.8f} | "
+                                    f"TP1: ${self.tp_cascade.tp_levels[0].tp_price:.8f} | "
                                     f"Qty: {qty:.4f} | "
                                     f"RR: {validate_result['ratio']}:1 | "
                                     f"Score: {score_result['score']}/{score_result['total_indicators']} | "
@@ -594,9 +592,7 @@ class TradingStrategy:
         log.info(
             f"🔄 [{self.symbol}] Sincronizado: {self.side} @ {self.entry_price}\n"
             f"  SL: {self.sl_price:.8f}\n"
-            f"  Cascata TP1/TP2/TP3: {self.tp_cascade.tp_levels[0].tp_price:.8f} / "
-            f"{self.tp_cascade.tp_levels[1].tp_price:.8f} / "
-            f"{self.tp_cascade.tp_levels[2].tp_price:.8f}"
+            f"  TP1: {self.tp_cascade.tp_levels[0].tp_price:.8f}"
         )
 
     def load_historical_data(self, timeframe, candles):
