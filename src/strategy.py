@@ -40,10 +40,6 @@ class TradingStrategy:
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
-        # Cascata de TPs (não mais TRAILING STOP)
-        self.use_regime_filter = False      # ❌ COMPLETAMENTE DESATIVADO: remove regime gap check
-        
-        self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
         self.allow_short = True
         
@@ -104,7 +100,7 @@ class TradingStrategy:
         self.account_balance = 100.0  # Será atualizado via main.py
         
         # Risco fixo em 2% (disciplinado conforme Mack)
-        self.risk_percent = 0.02  # SEMPRE 2%
+        self.risk_percent = 1.00  # SEMPRE 2%
         
         # =========================================================
         # FIBONACCI MANAGER (Estratégias 1, 2, 3)
@@ -612,7 +608,7 @@ class TradingStrategy:
             
             log.info(
                 f"✅ [{self.symbol}] Cascata recomenda: TP{result['tp_hit']} hit\n"
-                f"  Fechar: {result['close_percent']}%\n"
+                f"  Fechar: {result['close_pct']}%\n"
                 f"  Novo SL: {self.sl_price:.8f}"
             )
             
