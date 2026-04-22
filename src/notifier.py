@@ -63,7 +63,7 @@ class TelegramNotifier:
     
         self.send_message(msg)
     
-    def notify_signal_mack(self, symbol, side, entry, sl, tp, leverage, profile, strength, rationale, partials):
+    def notify_trade_opened(self, symbol, side, entry, sl, tp, leverage, profile, strength, rationale):
         """
         Envia sinal profissional no formato Mack
         """
@@ -72,28 +72,20 @@ class TelegramNotifier:
         except KeyError:
             profile_enum = SignalProfile.BALANCED
         
-        signal = (TradeSignalBuilder(symbol, side, entry)
-            .with_stops(sl, tp)
-            .with_leverage(int(leverage))
-            .with_profile(profile_enum)
-            .with_strength(strength)
-            .with_origin("Strategy")
-        )
-        
-        for reason in rationale:
-            signal.add_rationale(reason)
-        
-        for partial in partials:
-            signal.add_partial_tp(
-                tp_price=partial['tp'],
-                tp_percent=partial['percent'],
-                action=partial.get('action', 'CLOSE_PARTIAL'),
-                desc=partial.get('desc', '')
+        msg = (
+                f"*TRADE ABERTA*\n"
+                f"---\n"
+                f"*{symbol}* {side}\n"
+                f"📊 Entrada: `${entry:.2f}`\n"
+                f"🛡️ SL: `${sl:.2f}`\n"
+                f"🎯 TP: `${tp:.2f}`\n"
+                f"⚡ Lev: `{leverage}x`\n"
+                f"📈 Perfil: `{profile_enum.value}`\n"
+                f"💪 Força: `{strength}`\n"
+                f"🧠 Racional: {rationale}\n"
             )
         
-        signal_obj = signal.build()
-        formatted_message = self.formatter.format_signal_for_notification(signal_obj)
-        return self.send_message(formatted_message)
+        return self.send_message(msg)
     
     def notify_trade_closed(self, trade_data):
         """

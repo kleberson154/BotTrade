@@ -15,7 +15,6 @@ from src.execution import ExecutionManager
 from src.logger import setup_logger
 from src.notifier import TelegramNotifier
 from src.market_cycles import MarketCycleAnalyzer
-from src.tp_cascade_manager import TPCascadeManager
 from src.market_sentiment import MarketSentimentAnalyzer
 from src.indicators import TechnicalIndicators
 
@@ -99,13 +98,8 @@ def handle_signal_logic(message):
 
         # 1. Proteção de Posição Ativa
         if strat.is_positioned:
-            # Monitorar cascata de TPs
-            status = strat.check_cascade_tp(current_price)
-            if status and isinstance(status, dict) and status.get('action') == 'CLOSE_PARTIAL':
-                # TP foi atingido - executar close parcial
-                execute_partial_tp(symbol, strat, current_price)
-                # Atualizar SL remoto conforme novo stop loss
-                update_remote_sl(symbol, status.get('new_sl', strat.sl_price))
+            # Monitorar TP e SL (gerenciados automaticamente pela Bybit)
+            pass  # TPs e SLs são gerenciados pela ordem na exchange
 
         # 2. Busca por Entrada (Passando o sentimento e respeitando o intervalo do Backtest)
         elif is_confirmado and symbol in SYMBOLS:
@@ -277,19 +271,10 @@ def execute_new_trade(symbol, signal, price, atr):
         # 6. Calcular quantity com risco máximo 2%
         qty = risk_mgr.get_dynamic_risk_params(price, sl, cache_balance['total'])[1]
         
-        # 7. CASCATA DE TPS (3 níveis)
-        strat.tp_cascade = TPCascadeManager(
-            symbol=symbol,
-            side="LONG" if side == "Buy" else "SHORT",
-            entry=price,
-            initial_sl=sl,
-            account_balance=cache_balance['total'],
-            leverage=lev
-        )
-        strat.tp_cascade.calculate_scalp_tps(market_volatility=regime)
-        
-        # 8. Usar TP1 para a ordem (será gerenciado em cascata)
-        tp1_price = strat.tp_cascade.tp_levels[0].tp_price
+        # 7. Calcular TP único baseado em ATR (2-3% de ganho)
+        tp_mult = regime_params.get("atr_multiplier_tp", 2.0)
+        tp_distance = (atr / price) * tp_mult
+        tp_price = price * (1 + tp_distance) if side == "Buy" else price * (1 - tp_distance)
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         
@@ -307,12 +292,13 @@ def execute_new_trade(symbol, signal, price, atr):
 
         prepare_leverage(symbol, lev)
         
-        # 9. Envio da Ordem com SL fixo e TP1 da cascata
+        # 8. Envio da Ordem com SL fixo e TP único
         log.info(f"📤 Tentando enviar ordem: {symbol} {side} qty={qty_str} price={price:.6f} (notional={float(qty_str)*price:.2f} USDT)")
+        log.info(f"   TP: {tp_price:.6f} | SL: {sl:.6f}")
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 
-            takeProfit=str(round(tp1_price, p_prec)), 
+            takeProfit=str(round(tp_price, p_prec)), 
             stopLoss=str(round(sl, p_prec)),
             tpOrderType="Market", slOrderType="Market", tpslMode="Full"
         )
@@ -323,65 +309,32 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.entry_price = price
             strat.sl_price = sl
             strat.current_qty = float(qty)
-            strat.partial_taken = False
             
-            # Log do TP1
-            tp1 = strat.tp_cascade.tp_levels[0].tp_price
-            
-            tp1_pct = abs((tp1 - price) / price) * 100
-            
-            # Notificação Mack com sentimento
+            # Calcular força do sinal para notificação
             score_info = strat.last_score_result or {"score": 0, "total_indicators": 0}
             strength = min(float(score_info.get("score", 0)) / float(score_info.get("total_indicators", 1)), 1.0)
             
-            notifier.notify_signal_mack(
+            # Notificação com novo formato (1 TP apenas)
+            notifier.notify_trade_opened(
                 symbol=symbol,
                 side=side.upper(),
                 entry=price,
                 sl=sl,
-                tp=tp1,  # TP1 como principal
+                tp=tp_price,
                 leverage=lev,
-                profile=sentiment_data['profile'],  # Profile baseado em sentimento
+                profile=sentiment_data['profile'],
                 strength=strength,
                 rationale=[
                     f"[SENTIMENT] {sentiment_data['emoji']} {sentiment_data['emotion']}",
                     f"[REGIME] {regime}",
                     f"[SCORE] {score_info.get('score', 0)}/{score_info.get('total_indicators', 0)}"
-                ],
-                partials=[
-                    {"tp": tp1, "percent": 100, "action": "CLOSE_FINAL", "desc": "TP1"},
                 ]
             )
     except Exception as e:
         log.error(f"Erro na abertura de {symbol}: {e}")
 
-# ... (Mantenha as demais funções: execute_partial_tp, update_remote_sl, get_market_sentiment, get_cached_data, etc., conforme seu código original)
-
-def execute_partial_tp(symbol, strat, current_price):
-    if strat.partial_taken: return
-    try:
-        log.info(f"💰 Alvo Parcial em {symbol} ({current_price})")
-        q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        qty_to_close = strat.current_qty * 0.5
-        qty_str = str(int(qty_to_close)) if q_prec == 0 else str(round(qty_to_close, q_prec))
-        side_close = "Sell" if strat.side == "BUY" else "Buy"
-        res = session.place_order(category="linear", symbol=symbol, side=side_close, orderType="Market", qty=qty_str, reduceOnly=True)
-        if res['retCode'] == 0:
-            strat.partial_taken = True
-            strat.current_qty -= float(qty_str)
-            new_sl = strat.entry_price * (1.0005 if strat.side == "BUY" else 0.9995)
-            strat.sl_price = new_sl
-            update_remote_sl(symbol, new_sl)
-            notifier.send_message(f"✅ *{symbol}* Parcial de 50%!\n🛡️ Stop movido para o Zero.")
-    except Exception as e:
-        log.error(f"Erro na parcial de {symbol}: {e}")
-
-def update_remote_sl(symbol, new_sl):
-    try:
-        _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(round(new_sl, p_prec)), tpslMode="Full")
-    except Exception as e:
-        if "110001" not in str(e): log.error(f"Erro update SL {symbol}: {e}")
+# Nota: TP e SL são gerenciados automaticamente pela Bybit através das ordens
+# Não é necessário executar closes parciais manuais
 
 def get_market_sentiment():
     try:
