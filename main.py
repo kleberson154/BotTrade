@@ -662,7 +662,7 @@ def start_bot():
             timestamp_atual = time.time()
             get_cached_data()
             check_closed_trades()
-            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600 * 6:
+            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600 * 3:
                 notifier.send_heartbeat(risk_mgr, cache_balance, message_queue)
                 ULTIMO_CHECK_VIVO = timestamp_atual
             if timestamp_atual - ULTIMO_CHECK_CALOR >= 1800:
