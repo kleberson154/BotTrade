@@ -529,11 +529,13 @@ def check_closed_trades():
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
 def sync_historical_pnl():
+    global ULTIMO_ORDER_ID_PROCESSADO
     try:
         start_date_display = "2026-04-20 03:00:00"
         start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
+        last_processed_order_id = None
         log.info(f"🔄 Sincronizando histórico PnL desde {start_date_display} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
         
         for symbol in SYMBOLS:
@@ -555,8 +557,12 @@ def sync_historical_pnl():
                         risk_mgr.total_fees += fees
                         processed_orders.add(order_id)
                         trades_count += 1
+                        last_processed_order_id = order_id
                 log.info(f"  ✅ {symbol}: {trades_count} trades sincronizados")
         
+        if last_processed_order_id is not None:
+            ULTIMO_ORDER_ID_PROCESSADO = last_processed_order_id
+
         if risk_mgr.stats['total_trades'] > 0:
             log.info(f"📊 Total após sincronização: {risk_mgr.stats['total_trades']} trades, WR: {(risk_mgr.stats['wins']/risk_mgr.stats['total_trades']*100):.1f}%")
     except Exception as e: log.error(f"Erro sync pnl: {e}")
