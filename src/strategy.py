@@ -6,7 +6,6 @@ from collections import deque as python_deque
 
 from src.signal_formatter import TradeSignalBuilder, SignalProfile
 from src.mack_compliance import MackCompliance, PositionSizer
-from src.tp_cascade_manager import TPCascadeManager
 from src.fibonacci_manager import FibonacciManager
 from src.indicator_scorer import IndicatorScorer
 from src.indicators import TechnicalIndicators
@@ -76,9 +75,6 @@ class TradingStrategy:
         self.sl_price = 0
         self.tp_price = 0
         self.last_hold_reason = "init"
-        
-        # Cascata de TPs (novo sistema)
-        self.tp_cascade = None  # Será criado quando entrar em posição
         
         # =========================================================
         # INTEGRAÇÃO MACK - TradeSignalBuilder + Compliance
@@ -402,25 +398,7 @@ class TradingStrategy:
                     
                     self.last_score_result = score_result
                     
-                    # Score aprovado, criar TradeSignal COM CASCATA DE TPS
                     try:
-                        # ====== CASCATA DE TPS REALISTA ======
-                        # 1. Criar gerenciador de cascata
-                        self.tp_cascade = TPCascadeManager(
-                            symbol=self.symbol,
-                            side="LONG" if final_signal == "BUY" else "SHORT",
-                            entry=curr_price,
-                            initial_sl=sl_price,
-                            account_balance=self.account_balance,
-                            leverage=self.base_leverage
-                        )
-                        
-                        # 2. Calcular TPs realistas baseado em volatilidade
-                        market_volatility = self.current_regime  # COLD, LATERAL, NORMAL, HOT
-                        self.tp_cascade.calculate_scalp_tps(
-                            market_volatility=market_volatility
-                        )
-                        
                         # 3. Calcular quantidade com risco máximo 2% (DISCIPLINADO)
                         qty = self.position_sizer.calculate_qty(
                             account_balance=self.account_balance,
@@ -430,8 +408,7 @@ class TradingStrategy:
                             side="LONG" if final_signal == "BUY" else "SHORT"
                         )
                         
-                        # 4. Criar TradeSignal (com TP1 como referência)
-                        tp1_price = self.tp_cascade.tp_levels[0].tp_price
+                        # 4. Criar TradeSignal com TP único
                         signal = (TradeSignalBuilder(self.symbol, final_signal, curr_price)
                             .with_stops(sl_price, tp1_price)
                             .with_leverage(10)
@@ -439,6 +416,7 @@ class TradingStrategy:
                             .build())
                         
                         self.last_trade_signal = signal
+                        self.tp_price = tp1_price
                         
                         # 5. Fibonacci boost (se aplicável)
                         max_15m = self.data_1m['high'].iloc[-16:-1].max()
@@ -462,7 +440,7 @@ class TradingStrategy:
                                 "details": (
                                     f"Entry: ${curr_price:.8f} | "
                                     f"SL: ${sl_price:.8f} | "
-                                    f"TP1: ${self.tp_cascade.tp_levels[0].tp_price:.8f} | "
+                                    f"TP: ${tp1_price:.8f} | "
                                     f"Qty: {qty:.4f} | "
                                     f"RR: {validate_result['ratio']}:1 | "
                                     f"Score: {score_result['score']}/{score_result['total_indicators']} | "
@@ -493,7 +471,7 @@ class TradingStrategy:
                                 "vol": curr_vol
                             }
                         )
-                        log.error(f"❌ Erro ao criar TradeSignal/TPCascade ({self.symbol}): {e}")
+                        log.error(f"❌ Erro ao criar TradeSignal ({self.symbol}): {e}")
                         final_signal = "HOLD"
                         self.last_hold_reason = f"Erro no setup: {str(e)[:50]}"
 
@@ -506,37 +484,6 @@ class TradingStrategy:
     # =========================================================
     # GESTÃO DE RISCO - CASCATA DE TPS
     # =========================================================
-    def check_cascade_tp(self, current_price):
-        """
-        Monitora cascata de TPs e retorna ação se algum foi atingido.
-        
-        Retorna: {
-            "action": "CLOSE_PARTIAL" | "COMPLETE",
-            "tp_hit": 1/2/3,
-            "close_percent": quantidade a fechar,
-            "new_sl": novo stop loss
-        } ou None se nada foi atingido
-        """
-        
-        if not self.is_positioned or self.tp_cascade is None:
-            return None
-        
-        result = self.tp_cascade.check_cascade_hit(current_price)
-        
-        if result and result.get("action") == "CLOSE_PARTIAL":
-            # Atualizar SL conforme cascata determina
-            self.sl_price = result["new_sl"]
-            
-            log.info(
-                f"✅ [{self.symbol}] Cascata recomenda: TP{result['tp_hit']} hit\n"
-                f"  Fechar: {result['close_pct']}%\n"
-                f"  Novo SL: {self.sl_price:.8f}"
-            )
-            
-            return result
-        
-        return None
-
     # =========================================================
     # SINCRONIZAÇÃO E DADOS
     # =========================================================
@@ -566,7 +513,6 @@ class TradingStrategy:
     def sync_position(self, side, entry_price, sl_price, tp_price):
         """
         Sincroniza posição aberta com a estratégia.
-        Cria cascata de TPs para gerenciar saídas.
         """
         self.is_positioned = True
         self.side = "BUY" if side == "Buy" else "SELL"
@@ -574,25 +520,10 @@ class TradingStrategy:
         self.sl_price = self.safe_float(sl_price)
         self.tp_price = self.safe_float(tp_price)
         
-        # Criar cascata de TPs para a posição sincronizada
-        self.tp_cascade = TPCascadeManager(
-            symbol=self.symbol,
-            side=self.side,
-            entry=self.entry_price,
-            initial_sl=self.sl_price,
-            account_balance=self.account_balance,
-            leverage=10
-        )
-        
-        # Calcular TPs realistas
-        self.tp_cascade.calculate_scalp_tps(
-            market_volatility=self.current_regime
-        )
-        
         log.info(
             f"🔄 [{self.symbol}] Sincronizado: {self.side} @ {self.entry_price}\n"
             f"  SL: {self.sl_price:.8f}\n"
-            f"  TP1: {self.tp_cascade.tp_levels[0].tp_price:.8f}"
+            f"  TP: {self.tp_price:.8f}"
         )
 
     def load_historical_data(self, timeframe, candles):

@@ -34,7 +34,7 @@ class TelegramNotifier:
             log.error(f"⚠️ Erro ao enviar Telegram: {e}")
             
     def send_heartbeat(self, risk_mgr, cache_balance, message_queue):
-        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
+        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_summary()
     
         balance_total = cache_balance.get('total', 0.0)
     
