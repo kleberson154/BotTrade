@@ -37,18 +37,12 @@ class TradingStrategy:
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
-<<<<<<< HEAD
-        # 🔧 Filtros e controles
-        self.use_regime_filter = False      # Desativado por enquanto
-        self.invert_signal = False          # Desativado por enquanto
-=======
         # Cascata de TPs (não mais TRAILING STOP)
         self.use_regime_filter = False      # ❌ COMPLETAMENTE DESATIVADO: remove regime gap check
         
         self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
         self.allow_long = True
         self.allow_short = True
->>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
         
         # Regime-aware parameters
         self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
@@ -95,12 +89,9 @@ class TradingStrategy:
         self.last_trade_signal = None
         self.account_balance = 100.0  # Será atualizado via main.py
         
-<<<<<<< HEAD
-=======
         # Risco fixo em 2% (disciplinado conforme Mack)
         self.risk_percent = 0.02  # SEMPRE 2%
         
->>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
         # =========================================================
         # FIBONACCI MANAGER (Estratégias 1, 2, 3)
         # =========================================================
@@ -499,8 +490,6 @@ class TradingStrategy:
     # =========================================================
     # GESTÃO DE RISCO - CASCATA DE TPS
     # =========================================================
-<<<<<<< HEAD
-=======
     def check_cascade_tp(self, current_price):
         """
         Monitora cascata de TPs e retorna ação se algum foi atingido.
@@ -532,7 +521,6 @@ class TradingStrategy:
         
         return None
 
->>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
     # =========================================================
     # SINCRONIZAÇÃO E DADOS
     # =========================================================
