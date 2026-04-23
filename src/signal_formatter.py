@@ -60,7 +60,6 @@ class TradeSignal:
     
     # Metadata
     created_at: str
-    signal_hash: str           # Hash para auditoria
 
 
 class MackRulesValidator:
@@ -292,7 +291,6 @@ class TradeSignalBuilder:
     def build(self) -> TradeSignal:
         """Constrói e valida o sinal"""
         import datetime
-        import hashlib
         
         if not self._sl or not self._tp:
             raise ValueError("SL e TP são obrigatórios")
@@ -312,10 +310,6 @@ class TradeSignalBuilder:
         
         now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-3))).strftime('%H:%M:%S')
         
-        # Hash para auditoria
-        signal_str = f"{self.symbol}{self.side}{self.entry}{self._sl}{self._tp}{now}"
-        signal_hash = hashlib.md5(signal_str.encode()).hexdigest()[:8]
-        
         return TradeSignal(
             symbol=self.symbol,
             side=self.side,
@@ -331,6 +325,5 @@ class TradeSignalBuilder:
             partial_tps=self._partial_tps,
             risk_ratio=rr_check['ratio'],
             pnl_potential=pnl_potential,
-            created_at=now,
-            signal_hash=signal_hash
+            created_at=now
         )
