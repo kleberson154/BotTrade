@@ -37,9 +37,18 @@ class TradingStrategy:
         self.rsi_overbought = 70            # Filtro: Rejeita compra se RSI muito alto (exaustão)
         self.rsi_oversold = 30              # Filtro: Rejeita venda se RSI muito baixo (exaustão)
         
+<<<<<<< HEAD
         # 🔧 Filtros e controles
         self.use_regime_filter = False      # Desativado por enquanto
         self.invert_signal = False          # Desativado por enquanto
+=======
+        # Cascata de TPs (não mais TRAILING STOP)
+        self.use_regime_filter = False      # ❌ COMPLETAMENTE DESATIVADO: remove regime gap check
+        
+        self.invert_signal = False          # Alterar no main.py para SOL/XRP/AVAX
+        self.allow_long = True
+        self.allow_short = True
+>>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
         
         # Regime-aware parameters
         self.current_regime = "NORMAL"      # COLD, LATERAL, NORMAL, HOT
@@ -86,6 +95,12 @@ class TradingStrategy:
         self.last_trade_signal = None
         self.account_balance = 100.0  # Será atualizado via main.py
         
+<<<<<<< HEAD
+=======
+        # Risco fixo em 2% (disciplinado conforme Mack)
+        self.risk_percent = 0.02  # SEMPRE 2%
+        
+>>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
         # =========================================================
         # FIBONACCI MANAGER (Estratégias 1, 2, 3)
         # =========================================================
@@ -484,6 +499,40 @@ class TradingStrategy:
     # =========================================================
     # GESTÃO DE RISCO - CASCATA DE TPS
     # =========================================================
+<<<<<<< HEAD
+=======
+    def check_cascade_tp(self, current_price):
+        """
+        Monitora cascata de TPs e retorna ação se algum foi atingido.
+        
+        Retorna: {
+            "action": "CLOSE_PARTIAL" | "COMPLETE",
+            "tp_hit": 1/2/3,
+            "close_percent": quantidade a fechar,
+            "new_sl": novo stop loss
+        } ou None se nada foi atingido
+        """
+        
+        if not self.is_positioned or self.tp_cascade is None:
+            return None
+        
+        result = self.tp_cascade.check_cascade_hit(current_price)
+        
+        if result and result.get("action") == "CLOSE_PARTIAL":
+            # Atualizar SL conforme cascata determina
+            self.sl_price = result["new_sl"]
+            
+            log.info(
+                f"✅ [{self.symbol}] Cascata recomenda: TP{result['tp_hit']} hit\n"
+                f"  Fechar: {result['close_percent']}%\n"
+                f"  Novo SL: {self.sl_price:.8f}"
+            )
+            
+            return result
+        
+        return None
+
+>>>>>>> parent of b3cd799 (feat: versao estavel de btc com aumento de risco por trade)
     # =========================================================
     # SINCRONIZAÇÃO E DADOS
     # =========================================================
