@@ -21,3 +21,9 @@ Thumbs.db
 *.md
 deploy.py
 monitor_and_backtest.py
+/data
+backtest_optimized.py
+backtest.py
+download_90d_improved.py
+download_90d_v2.py
+download_btc_90d.py

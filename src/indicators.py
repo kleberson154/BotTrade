@@ -224,20 +224,3 @@ class TechnicalIndicators:
         indicators['volume_avg'] = df['volume'].tail(volume_lookback).mean()
         
         return indicators
-
-
-# =========================================================
-# ALIASES para compatibilidade com código existente
-# =========================================================
-
-def calculate_rsi_single(df, period=14):
-    """Compatibilidade com strategy.py"""
-    return TechnicalIndicators.calculate_rsi(df['close'], period)
-
-def calculate_adx_single(df, period=14):
-    """Compatibilidade com strategy.py"""
-    return TechnicalIndicators.calculate_adx(df, period)
-
-def calculate_atr_single(df, period=14):
-    """Compatibilidade com strategy.py"""
-    return TechnicalIndicators.calculate_atr(df, period)

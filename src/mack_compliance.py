@@ -17,9 +17,7 @@ log = logging.getLogger(__name__)
 class MackCompliance:
     def __init__(self, account_balance: float = 1000.0):
         self.account_balance = account_balance
-        self.max_risk_per_trade = 0.10  # 2% máximo por trade
-        self.max_daily_risk = 0.55      # 5% máximo por dia
-        self.daily_loss_accumulated = 0.0
+        self.max_risk_per_trade = 1.00  # 2% máximo por trade
         
         # Auditoria
         self.audit_log = []
@@ -53,14 +51,14 @@ class MackCompliance:
             return {"valid": False, "error": "TP no lado errado", "reward": reward}
         
         ratio = reward / risk
-        is_valid = ratio >= 0.5  # ✅ RELAXADO: mínimo 1:2 (era 1:3)
+        is_valid = ratio >= 2.0  # Mínimo 1:2: reward deve ser pelo menos 2x o risco
         
         audit_msg = f"[R:R] {symbol} {side} | Ratio: {ratio:.2f}:1 {'✅' if is_valid else '❌'}"
         self.audit_log.append(audit_msg)
         log.info(audit_msg)
         
         if not is_valid:
-            violation = f"REGRA 1 VIOLADA: {symbol} Risk:Reward {ratio:.2f}:1 (mínimo 1:3)"
+            violation = f"REGRA 1 VIOLADA: {symbol} Risk:Reward {ratio:.2f}:1 (mínimo 1:2)"
             self.violations.append(violation)
             log.warning(f"⚠️ {violation}")
         
@@ -69,7 +67,7 @@ class MackCompliance:
             "ratio": round(ratio, 2),
             "risk_points": risk,
             "reward_points": reward,
-            "min_required": "1:3"
+            "min_required": "1:2"
         }
     
     # ========================================================
