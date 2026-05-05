@@ -14,16 +14,14 @@ class RiskManager:
     # =========================================================
     def __init__(self, account_balance: float = 100.0):
         """Inicializa RiskManager com saldo da conta Bybit"""
-        self.max_positions = 5  # Aumentado para 15 moedas, banca 120 USDT
+        self.max_positions = 0.1  # Alterado para usar 100% do capital por trade
         self.fixed_leverage = 10.0  # Leverage base (será ajustada por regime)
         self.total_pnl_bruto = 0.0
         self.total_pnl = 0.0  # PnL acumulado total
         self.total_fees = 0.0
-        self.trades_history = []
-        self.performance = {}  # Rastreamento de performance por moeda
         
         # � Timestamp de reset dos stats
-        self.reset_date_str = "2026-04-19 00:00:00"
+        self.reset_date_str = "2026-05-05 12:00:00"
         
         # �💰 Balance sincronizado com Bybit
         self.account_balance = account_balance
@@ -62,120 +60,75 @@ class RiskManager:
     # =========================================================
     # 2. GESTÃO DE DESEMPENHO (DASHBOARD)
     # =========================================================
-    def update_dashboard(self, symbol, pnl_liquido):
+    def record_trade_result(self, symbol, pnl_liquido):
         self.stats['total_trades'] += 1
-        
+        self.total_pnl += pnl_liquido
         if pnl_liquido > 0.05:
             self.stats['wins'] += 1
             status = "WIN"
         else:
             self.stats['losses'] += 1
             status = "LOSS"
-    
         self.stats['pnl_history'][symbol] = self.stats['pnl_history'].get(symbol, 0) + pnl_liquido
         return status
 
-    def get_performance_stats(self):
+    def get_performance_summary(self):
         total = self.stats["total_trades"]
         wins = self.stats["wins"]
         win_rate = (wins / total * 100) if total > 0 else 0
-        pnl_net = sum(self.stats["pnl_history"].values())
-        
-        # Calcula proteção (SL hits vs total) e taxa de sucesso
+        pnl_net = self.total_pnl
         sl_hits = self.stats['exit_methods'].get('sl_hit', 0)
         protection_rate = (sl_hits / total * 100) if total > 0 else 0
-        success_rate = win_rate  # Mesmo que win_rate (% de trades lucrativos)
-        
+        success_rate = win_rate
         return total, wins, protection_rate, win_rate, success_rate, pnl_net
-    
-    def add_historical_trade(self, symbol, pnl_net):
-        if symbol not in self.performance:
-            self.performance[symbol] = []
-            self.performance[symbol].append(pnl_net)
-            self.total_pnl += pnl_net
-    
-    def add_trade_result(self, symbol, pnl_bruto, fees):
-        pnl_net = pnl_bruto - fees
-        self.total_pnl_bruto += pnl_bruto
-        self.total_fees += fees
-        
-        trade_data = {
-            'symbol': symbol,
-            'pnl_net': pnl_net,
-            'is_win': pnl_net > 0,
-            'timestamp': datetime.datetime.now()
-        }
-        self.trades_history.append(trade_data)
-        return pnl_net
 
     # =========================================================
     # 3. CÁLCULOS DINÂMICOS DE RISCO (ALAVANCAGEM E QTY)
     # =========================================================
-    def set_leverage_for_regime(self, regime):
-        regime_leverage_map = {
+    def apply_regime_leverage(self, regime):
+        leverage_map = {
             "COLD": 5.0,
             "LATERAL": 3.0,
             "NORMAL": 10.0,
             "HOT": 15.0,
         }
-        self.fixed_leverage = regime_leverage_map.get(regime, 10.0)
+        self.fixed_leverage = leverage_map.get(regime, 10.0)
     
-    def get_dynamic_risk_params(self, entry_price, sl_price, total_balance):
-        margin_per_trade = total_balance / self.max_positions 
-        position_value = margin_per_trade * self.fixed_leverage
+    def calculate_trade_quantity(self, entry_price, sl_price, account_balance):
+        """Calcula a quantidade de contrato usando o saldo completo e a alavancagem atual."""
+        position_value = account_balance * self.fixed_leverage
         qty = position_value / entry_price
-        
         return self.fixed_leverage, qty
 
     # =========================================================
-    # 4. CÁLCULOS DE STOP LOSS E TAKE PROFIT ADAPTATIVO
+    # 4. CÁLCULOS DE STOP LOSS E TAKE PROFIT ADAPTIVO
     # =========================================================
-    def get_sl_tp_adaptive(self, symbol, side, price, atr, leverage):
-        """
-        Define o Stop Loss inicial.
-        O SL é baseado no ATR (volatilidade), e então a cascata de TPs
-        (check_cascade_tp) vai gerenciar saídas parciais em TP1, TP2, TP3.
-        """
-        distancia_sl = atr * 2.2 # Stop técnico curto
-        
+    def calculate_sl_tp(self, price, atr, side):
+        """Calcula SL e TP iniciais com base em ATR e RR conservador."""
+        distancia_sl = atr * 2.2  # Stop técnico curto
         if side == "Buy":
             sl = price - distancia_sl
-            tp = price + (distancia_sl * 2.5) # Alvo inicial de 2.5x o risco
+            tp = price + (distancia_sl * 2.5)
         else:
             sl = price + distancia_sl
             tp = price - (distancia_sl * 2.5)
-            
         return sl, tp
     
     # =========================================================
     # 🆕 5. MACK COMPLIANCE - 5 REGRAS DE TRADING DISCIPLINADO
     # =========================================================
     
-    def validate_trade_mack(self, entry, sl, tp, symbol, side="LONG"):
-        """
-        🚨 REGRA 1 DO MACK: Risco:Retorno 1:2 MÍNIMO
-        
-        Rejeita qualquer trade que não tenha pelo menos 1:2
-        Por quê? Precisaria de 80% de acerto para ganhar dinheiro com RR<1:2
-        """
+    def validate_risk_reward(self, entry, sl, tp, symbol, side="LONG"):
+        """Verifica se a operação atende ao RR mínimo de 1:2."""
         result = self.compliance.validate_rr_ratio(entry, sl, tp, side, symbol)
-        
         if not result['valid']:
-            log.error(f"❌ {symbol} REJEITADO: RR {result['ratio']}:1 < 1:2 (Mack Rule #1)")
+            log.error(f"❌ {symbol} REJEITADO: RR {result['ratio']}:1 < 1:2")
             return {"valid": False, "reason": result, "ratio": result['ratio']}
-        
-        log.info(f"✅ {symbol} {side} | RR: {result['ratio']}:1 APROVADO (Mack Rule #1)")
+        log.info(f"✅ {symbol} {side} | RR: {result['ratio']}:1 OK")
         return {"valid": True, "ratio": result['ratio']}
     
-    def calculate_position_size_mack(self, entry, sl, account_balance=None, side="LONG", risk_percent=0.02):
-        """
-        🚨 REGRA 4 DO MACK: Dimensionamento Confortável
-        
-        Fórmula Mack: Qty = (Account × Risk%) / |Entry - SL|
-        Risco máximo: 2% por trade (padrão profissional)
-        
-        Resultado: Você dorme tranquilo com a posição!
-        """
+    def calculate_position_size(self, entry, sl, account_balance=None, side="LONG", risk_percent=0.02):
+        """Calcula quantidade com base em risco percentual e tamanho de conta."""
         if account_balance is None:
             account_balance = self.account_balance
         
@@ -187,7 +140,6 @@ class RiskManager:
             side=side
         )
         
-        # Validar se posição está confortável
         sizing_result = self.compliance.validate_position_sizing(
             symbol="",
             entry=entry,
@@ -200,7 +152,6 @@ class RiskManager:
         
         if not sizing_result['valid']:
             log.warning(f"⚠️ {sizing_result['comfort_status']}")
-        
         return qty
     
     def check_sl_violation(self, symbol, old_sl, new_sl, side, current_pnl):
@@ -253,8 +204,8 @@ class RiskManager:
         """Retorna auditoria completa das 5 regras do Mack"""
         return self.compliance.get_compliance_report()
     
-    def update_compliance(self, account_balance):
-        """Atualiza saldo de compliance (chamar após trade fechado)"""
+    def sync_account_balance(self, account_balance):
+        """Atualiza o saldo do RiskManager e do compliance."""
         self.account_balance = account_balance
         self.compliance.account_balance = account_balance
 

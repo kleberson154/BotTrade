@@ -11,11 +11,9 @@ from threading import Thread
 from src.connection import get_websocket_session, get_http_session
 from src.strategy import TradingStrategy
 from src.risk_manager import RiskManager
-from src.execution import ExecutionManager
 from src.logger import setup_logger
 from src.notifier import TelegramNotifier
 from src.market_cycles import MarketCycleAnalyzer
-from src.tp_cascade_manager import TPCascadeManager
 from src.market_sentiment import MarketSentimentAnalyzer
 from src.indicators import TechnicalIndicators
 
@@ -34,14 +32,13 @@ API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 _mode = os.getenv("BYBIT_MODE", "demo").lower()
 IS_TESTNET = _mode == "testnet"
 IS_DEMO = _mode == "demo"
-SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT,XRPUSDT,NEARUSDT,LINKUSDT,SUIUSDT,OPUSDT,ETHUSDT,AVAXUSDT,SOLUSDT,ADAUSDT,DOTUSDT").split(",")
-ULTIMO_CHECK_VIVO = 0 
-SALDO_INICIAL_DIA = None
-ULTIMO_ORDER_ID_PROCESSADO = None
+SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
 ULTIMO_CHECK_CALOR = 0
 LAST_HOLD_LOG = {}
 LAST_REGIME_LOG = 0
 REGIME_COLD_THRESHOLD = 0.0010  # ATR% abaixo disso é frio
+ULTIMO_ORDER_ID_PROCESSADO = None
+ULTIMO_CHECK_VIVO = 0
 
 # --- MARKET CYCLES ANALYZER (NEW) ---
 market_cycles = MarketCycleAnalyzer()
@@ -60,13 +57,7 @@ for symbol in SYMBOLS:
 log = setup_logger()
 risk_mgr = RiskManager(account_balance=100.0)  # Será atualizado após primeira leitura de balance
 session = get_http_session(API_KEY, API_SECRET, testnet=IS_TESTNET, demo=IS_DEMO)
-executor = ExecutionManager(session)
 message_queue = Queue()
-
-MASTERS = ["BTCUSDT"]  # Only master signals from active coins
-for m in MASTERS:
-    if m not in strategies:
-        strategies[m] = TradingStrategy(symbol=m, notifier=notifier)
 
 cache_balance = {"total": 0, "avail": 0, "last_update": 0}
 cache_positions = {"data": [], "last_update": 0}
@@ -75,7 +66,7 @@ cache_positions = {"data": [], "last_update": 0}
 # 1. LÓGICA PRINCIPAL DE SINAIS E ESTRATÉGIA
 # =========================================================
 
-def handle_signal_logic(message):
+def process_signal_message(message):
     if "data" not in message: return
     
     topic = message.get("topic", "")
@@ -106,13 +97,8 @@ def handle_signal_logic(message):
 
         # 1. Proteção de Posição Ativa
         if strat.is_positioned:
-            # Monitorar cascata de TPs
-            status = strat.check_cascade_tp(current_price)
-            if status and isinstance(status, dict) and status.get('action') == 'CLOSE_PARTIAL':
-                # TP foi atingido - executar close parcial
-                execute_partial_tp(symbol, strat, current_price)
-                # Atualizar SL remoto conforme novo stop loss
-                update_remote_sl(symbol, status.get('new_sl', strat.sl_price))
+            evaluate_open_position(symbol, strat, current_price, sentimento)
+            return
 
         # 2. Busca por Entrada (Passando o sentimento e respeitando o intervalo do Backtest)
         elif is_confirmado and symbol in SYMBOLS:
@@ -125,7 +111,7 @@ def handle_signal_logic(message):
 
             if signal in ["BUY", "SELL"]:
                 log.info(f"🎯 SINAL {signal} em {symbol} | Sentimento: {sentimento}")
-                execute_new_trade(symbol, signal, current_price, current_atr)
+                place_market_trade(symbol, signal, current_price, current_atr)
             else:
                 now_ts = time.time()
                 last_ts = LAST_HOLD_LOG.get(symbol, 0)
@@ -138,84 +124,53 @@ def handle_signal_logic(message):
 # 2. FUNÇÕES DE EXECUÇÃO E API
 # =========================================================
 
-def validate_order_quantity(symbol, price, qty):
-    """
-    ⚠️ VALIDAÇÃO DE SEGURANÇA - Evita erros 110007 e 10001
-    
-    Retorna: (é_válido, quantidade_ajustada, razão)
-    """
+def normalize_order_quantity(symbol, price, qty, leverage=10):
+    """Ajusta a quantidade para a precisão e valida saldo disponível."""
     q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
     
     # 1. NOTIONAL MÍNIMO BYBIT: ~5 USDT
     notional = price * qty
     min_notional = 5.0
-    
     if notional < min_notional:
         adjusted_qty = max(0.1, min_notional / price)
-        if q_prec == 0:
-            adjusted_qty = int(adjusted_qty)
-        else:
-            adjusted_qty = round(adjusted_qty, q_prec)
-        
-        new_notional = price * adjusted_qty
-        if new_notional < min_notional:
+        adjusted_qty = int(adjusted_qty) if q_prec == 0 else round(adjusted_qty, q_prec)
+        if price * adjusted_qty < min_notional:
             return False, adjusted_qty, f"Notional {notional:.2f} USDT < mínimo {min_notional} USDT"
     
-    # 2. PRECISÃO DE QUANTIDADE
-    if q_prec == 0:
-        qty_final = int(qty)
-    else:
-        qty_final = round(qty, q_prec)
-    
-    # 3. Quantidade positiva
+    # 2. Ajusta precisão
+    qty_final = int(qty) if q_prec == 0 else round(qty, q_prec)
     if qty_final <= 0:
         return False, qty_final, "Quantidade <= 0"
     
-    # 4. VALIDAÇÃO DE SALDO - Bybit bloqueia se não há margem suficiente
-    # ⚠️ DISTRIBUIR SALDO entre posições restantes para evitar erro 110007
-    # Ao invés de usar 50% do saldo total, dividir entre slots de posições livres
-    
-    # Slots disponíveis = max_positions - posições abertas
-    slots_livres = max(1, risk_mgr.max_positions - len(cache_positions['data']))
-    
-    # Cada slot recebe uma parcela do saldo disponível
-    # Usar 80% do saldo disponível dividido pelos slots
-    available_for_new = (cache_balance['avail'] * 0.8) / slots_livres
-    
-    log.debug(f"   [VALIDAÇÃO {symbol}] Slots livres: {slots_livres}, Margem por slot: {available_for_new:.2f}")
-    
-    # Calcular margem necessária com leverage 10x
-    margin_needed = (price * qty_final) / 10.0
-    
+    # 3. Valida margem usando saldo disponível inteiro
+    available_for_new = cache_balance['avail']
+    margin_needed = (price * qty_final) / float(leverage)
     log.debug(f"   [VALIDAÇÃO {symbol}] Margem: precisa={margin_needed:.2f}, available={available_for_new:.2f} (total={cache_balance['total']:.2f})")
-    
     if margin_needed > available_for_new:
-        # Reduzir drasticamente a quantidade
-        qty_reduced = (available_for_new * 10.0) / price
-        if q_prec == 0:
-            qty_reduced = int(qty_reduced)
-        else:
-            qty_reduced = round(qty_reduced, q_prec)
-        
+        qty_reduced = (available_for_new * float(leverage)) / price
+        qty_reduced = int(qty_reduced) if q_prec == 0 else round(qty_reduced, q_prec)
         if qty_reduced <= 0:
             reason = f"❌ Margem insuficiente: precisa {margin_needed:.2f} USDT, disponível {available_for_new:.2f} USDT"
             log.warning(reason)
             return False, qty_final, reason
-        
+        adjusted_notional = price * qty_reduced
+        if adjusted_notional < min_notional:
+            reason = f"❌ Quantidade reduzida muito baixa: notional {adjusted_notional:.2f} USDT < mínimo {min_notional} USDT"
+            log.warning(reason)
+            return False, qty_final, reason
         reason = f"Quantidade reduzida: {qty:.2f} → {qty_reduced:.2f} (margem: precisa {margin_needed:.2f}, tem {available_for_new:.2f})"
         log.info(f"⚠️ {symbol} {reason}")
-        return False, qty_reduced, reason
-    
+        return True, qty_reduced, reason
     return True, qty_final, "OK"
 
-def execute_new_trade(symbol, signal, price, atr):
+def place_market_trade(symbol, signal, price, atr):
     get_cached_data()
-    if len(cache_positions['data']) >= risk_mgr.max_positions: 
+    if len(cache_positions['data']) >= risk_mgr.max_positions:
         log.info(f"⏭️ {symbol} ignorado: posições máximas ({len(cache_positions['data'])}) alcançadas")
         return
-    if cache_balance['avail'] < 5.0: 
+    if cache_balance['avail'] < 5.0:
         log.warning(f"⏭️ {symbol} ignorado: saldo disponível {cache_balance['avail']:.2f} USDT < 5 USDT")
-        return 
+        return
 
     try:
         strat = strategies[symbol]
@@ -281,28 +236,19 @@ def execute_new_trade(symbol, signal, price, atr):
         sl = price * (1 - dist_sl) if side == "Buy" else price * (1 + dist_sl)
         
         # 6. Calcular quantity com risco máximo 2%
-        qty = risk_mgr.get_dynamic_risk_params(price, sl, cache_balance['total'])[1]
+        _, qty = risk_mgr.calculate_trade_quantity(price, sl, cache_balance['total'])
         
-        # 7. CASCATA DE TPS (3 níveis)
-        strat.tp_cascade = TPCascadeManager(
-            symbol=symbol,
-            side="LONG" if side == "Buy" else "SHORT",
-            entry=price,
-            initial_sl=sl,
-            account_balance=cache_balance['total'],
-            leverage=lev
-        )
-        strat.tp_cascade.calculate_scalp_tps(market_volatility=regime)
-        
-        # 8. Usar TP1 para a ordem (será gerenciado em cascata)
-        tp1_price = strat.tp_cascade.tp_levels[0].tp_price
+        # 7. Calcular TP único baseado em ATR (2-3% de ganho)
+        tp_mult = regime_params.get("atr_multiplier_tp", 2.0)
+        tp_distance = (atr / price) * tp_mult
+        tp_price = price * (1 + tp_distance) if side == "Buy" else price * (1 - tp_distance)
         
         q_prec, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
         
         # 🛡️ VALIDAÇÃO DE QUANTIDADE ANTES DE ENVIAR
         log.info(f"[{symbol}] Validando ordem: price={price:.6f}, qty={qty:.2f}")
         log.info(f"   Saldo: total={cache_balance['total']:.2f}, avail={cache_balance['avail']:.2f}")
-        is_valid_qty, validated_qty, reason = validate_order_quantity(symbol, price, qty)
+        is_valid_qty, validated_qty, reason = normalize_order_quantity(symbol, price, qty, lev)
         
         if not is_valid_qty:
             log.warning(f"❌ {symbol} REJEITADO: Quantidade inválida - {reason}")
@@ -313,12 +259,13 @@ def execute_new_trade(symbol, signal, price, atr):
 
         prepare_leverage(symbol, lev)
         
-        # 9. Envio da Ordem com SL fixo e TP1 da cascata
+        # 8. Envio da Ordem com SL fixo e TP único
         log.info(f"📤 Tentando enviar ordem: {symbol} {side} qty={qty_str} price={price:.6f} (notional={float(qty_str)*price:.2f} USDT)")
+        log.info(f"   TP: {tp_price:.6f} | SL: {sl:.6f}")
         order = session.place_order(
             category="linear", symbol=symbol, side=side, orderType="Market",
             qty=qty_str, 
-            takeProfit=str(round(tp1_price, p_prec)), 
+            takeProfit=str(round(tp_price, p_prec)), 
             stopLoss=str(round(sl, p_prec)),
             tpOrderType="Market", slOrderType="Market", tpslMode="Full"
         )
@@ -327,76 +274,174 @@ def execute_new_trade(symbol, signal, price, atr):
             strat.is_positioned = True
             strat.side = signal
             strat.entry_price = price
+            strat.tp_price = tp_price
             strat.sl_price = sl
-            strat.current_qty = float(qty)
-            strat.partial_taken = False
+            strat.current_qty = float(validated_qty)
+            strat.entry_timestamp = time.time()
+            strat.breakeven_moved = False
             
-            # Log dos 3 TPs
-            tp1 = strat.tp_cascade.tp_levels[0].tp_price
-            tp2 = strat.tp_cascade.tp_levels[1].tp_price
-            tp3 = strat.tp_cascade.tp_levels[2].tp_price
-            
-            tp1_pct = abs((tp1 - price) / price) * 100
-            
-            # Notificação Mack com sentimento
+            # Calcular força do sinal para notificação
             score_info = strat.last_score_result or {"score": 0, "total_indicators": 0}
             strength = min(float(score_info.get("score", 0)) / float(score_info.get("total_indicators", 1)), 1.0)
             
-            notifier.notify_signal_mack(
+            # Notificação com novo formato (1 TP apenas)
+            notifier.notify_trade_opened(
                 symbol=symbol,
                 side=side.upper(),
                 entry=price,
                 sl=sl,
-                tp=tp1,  # TP1 como principal
+                tp=tp_price,
                 leverage=lev,
-                profile=sentiment_data['profile'],  # Profile baseado em sentimento
+                profile=sentiment_data['profile'],
                 strength=strength,
                 rationale=[
                     f"[SENTIMENT] {sentiment_data['emoji']} {sentiment_data['emotion']}",
                     f"[REGIME] {regime}",
                     f"[SCORE] {score_info.get('score', 0)}/{score_info.get('total_indicators', 0)}"
-                ],
-                partials=[
-                    {"tp": tp1, "percent": 50, "action": "CLOSE_PARTIAL", "desc": "TP1"},
-                    {"tp": tp2, "percent": 30, "action": "CLOSE_PARTIAL", "desc": "TP2"},
-                    {"tp": tp3, "percent": 20, "action": "CLOSE_FINAL", "desc": "TP3"},
                 ]
             )
     except Exception as e:
         log.error(f"Erro na abertura de {symbol}: {e}")
 
-# ... (Mantenha as demais funções: execute_partial_tp, update_remote_sl, get_market_sentiment, get_cached_data, etc., conforme seu código original)
 
-def execute_partial_tp(symbol, strat, current_price):
-    if strat.partial_taken: return
+def evaluate_open_position(symbol, strat, current_price, market_sentiment):
     try:
-        log.info(f"💰 Alvo Parcial em {symbol} ({current_price})")
-        q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        qty_to_close = strat.current_qty * 0.5
-        qty_str = str(int(qty_to_close)) if q_prec == 0 else str(round(qty_to_close, q_prec))
-        side_close = "Sell" if strat.side == "BUY" else "Buy"
-        res = session.place_order(category="linear", symbol=symbol, side=side_close, orderType="Market", qty=qty_str, reduceOnly=True)
-        if res['retCode'] == 0:
-            strat.partial_taken = True
-            strat.current_qty -= float(qty_str)
-            new_sl = strat.entry_price * (1.0005 if strat.side == "BUY" else 0.9995)
-            strat.sl_price = new_sl
-            update_remote_sl(symbol, new_sl)
-            notifier.send_message(f"✅ *{symbol}* Parcial de 50%!\n🛡️ Stop movido para o Zero.")
+        strat._sync_dataframes()
+        if strat.data_1m is None or len(strat.data_1m) < 20 or strat.data_15m is None or len(strat.data_15m) < 20:
+            return
+
+        entry = strat.entry_price
+        sl = strat.sl_price
+        tp = getattr(strat, 'tp_price', 0)
+        qty = getattr(strat, 'current_qty', 0.0)
+        side = strat.side
+        if entry <= 0 or sl <= 0 or tp <= 0 or qty <= 0 or side not in ["BUY", "SELL"]:
+            return
+
+        is_long = side == "BUY"
+        dist_tp = abs(tp - entry)
+        dist_sl = abs(entry - sl)
+        if dist_tp <= 0 or dist_sl <= 0:
+            return
+
+        current_profit = (current_price - entry) if is_long else (entry - current_price)
+        current_drawdown = (entry - current_price) if is_long else (current_price - entry)
+        pct_path = max(0.0, min(1.0, current_profit / dist_tp)) if current_profit > 0 else 0.0
+        loss_pct = max(0.0, min(1.0, current_drawdown / dist_sl)) if current_drawdown > 0 else 0.0
+        open_minutes = (time.time() - getattr(strat, 'entry_timestamp', time.time())) / 60.0
+
+        rsi_1m = TechnicalIndicators.calculate_rsi(strat.data_1m['close']).iloc[-1]
+        adx_1m = TechnicalIndicators.calculate_adx(strat.data_1m).iloc[-1]
+        ema_20_1m = TechnicalIndicators.calculate_ema(strat.data_1m['close'], 20).iloc[-1]
+        ema_50_15m = TechnicalIndicators.calculate_ema(strat.data_15m['close'], 50).iloc[-1]
+        volume_momentum = TechnicalIndicators.calculate_volume_momentum(strat.data_1m, 5)
+
+        price_near_tp = pct_path >= 0.85
+        price_halfway = pct_path >= 0.50
+        weak_momentum = (
+            (is_long and current_price < ema_20_1m and rsi_1m < 50) or
+            (not is_long and current_price > ema_20_1m and rsi_1m > 50)
+        )
+        trend_lost = adx_1m < 18
+        weak_volume = volume_momentum < 0.85
+        has_fade = weak_momentum and (trend_lost or weak_volume)
+
+        # ====== REGRA 1: fechar se estiver perto do TP e o momentum estiver perdendo força
+        if price_near_tp and pct_path >= 0.7 and has_fade:
+            close_open_position(symbol, strat, "Perda de força perto do TP")
+            return
+
+        # ====== OPÇÃO A: mover SL para breakeven quando estiver em lucro significativo
+        if price_halfway and current_profit > 0 and not getattr(strat, 'breakeven_moved', False):
+            move_stop_loss_to_breakeven(symbol, strat)
+            return
+
+        # ====== REGRA 2: proteger trade antiga com pouco progresso
+        if open_minutes >= 120 and pct_path < 0.25 and not getattr(strat, 'breakeven_moved', False):
+            move_stop_loss_to_breakeven(symbol, strat)
+            return
+
+        # ====== REGRA 3: fechar se o mercado virou contra a posição e o drawdown está crescendo
+        if loss_pct >= 0.7 and has_fade:
+            close_open_position(symbol, strat, "Reversão clara e perda potencial grande")
+            return
+
     except Exception as e:
-        log.error(f"Erro na parcial de {symbol}: {e}")
+        log.error(f"Erro avaliando posição aberta em {symbol}: {e}")
 
-def update_remote_sl(symbol, new_sl):
+
+def move_stop_loss_to_breakeven(symbol, strat, buffer_pct=0.0005):
     try:
+        if strat.entry_price <= 0 or strat.sl_price <= 0:
+            return
+
+        is_long = strat.side == "BUY"
+        new_sl = strat.entry_price * (1 + buffer_pct) if is_long else strat.entry_price * (1 - buffer_pct)
         _, p_prec = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
-        session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(round(new_sl, p_prec)), tpslMode="Full")
+
+        response = session.set_trading_stop(
+            category="linear",
+            symbol=symbol,
+            stopLoss=str(round(new_sl, p_prec)),
+            tpslMode="Full"
+        )
+
+        if response.get('retCode') == 0:
+            strat.sl_price = new_sl
+            strat.breakeven_moved = True
+            notifier.send_message(
+                f"🛡️ {symbol} SL movido para breakeven ({new_sl:.4f}) após gestão ativa de posição."
+            )
+            log.info(f"[{symbol}] SL movido para breakeven: {new_sl:.8f}")
+        else:
+            log.warning(f"[{symbol}] Falha ao mover SL para breakeven: {response}")
     except Exception as e:
-        if "110001" not in str(e): log.error(f"Erro update SL {symbol}: {e}")
+        log.error(f"Erro movendo SL para breakeven em {symbol}: {e}")
+
+
+def close_open_position(symbol, strat, reason):
+    try:
+        q_prec, _ = risk_mgr.PRECISION_MAP.get(symbol, (1, 4))
+        qty = strat.current_qty
+        if qty <= 0:
+            return
+
+        qty_str = str(int(qty)) if q_prec == 0 else str(round(qty, q_prec))
+        side_close = "Sell" if strat.side == "BUY" else "Buy"
+        response = session.place_order(
+            category="linear",
+            symbol=symbol,
+            side=side_close,
+            orderType="Market",
+            qty=qty_str,
+            reduceOnly=True
+        )
+
+        if response.get('retCode') == 0:
+            strat.is_positioned = False
+            strat.current_qty = 0.0
+            strat.side = None
+            strat.entry_price = 0.0
+            strat.sl_price = 0.0
+            strat.tp_price = 0.0
+            strat.breakeven_moved = False
+            notifier.send_message(
+                f"❌ {symbol} fechado por gestão ativa: {reason}"
+            )
+            log.info(f"[{symbol}] Posição fechada por gestão ativa: {reason}")
+            get_cached_data(force=True)
+        else:
+            log.warning(f"[{symbol}] Falha ao fechar posição por gestão ativa: {response}")
+    except Exception as e:
+        log.error(f"Erro fechando posição em {symbol}: {e}")
+
+# Nota: TP e SL são gerenciados automaticamente pela Bybit através das ordens
+# Não é necessário executar closes parciais manuais
 
 def get_market_sentiment():
     try:
         results = []
-        for symbol in ["BTCUSDT", "XRPUSDT"]:  # Updated: use only active coins (BTC + XRP)
+        for symbol in ["BTCUSDT"]:  # Bitcoin only
             strat = strategies.get(symbol)
             if strat is None or strat.data_15m is None or len(strat.data_15m) < 20: continue
             df = strat.data_15m
@@ -446,7 +491,7 @@ def get_cached_data(force=False):
                             "last_update": now
                         }
                         # 💰 Sincronizar balance com RiskManager
-                        risk_mgr.update_compliance(total)
+                        risk_mgr.sync_account_balance(total)
             
             # 2. Busca Posições
             p_resp = session.get_positions(category="linear", settleCoin="USDT")
@@ -475,16 +520,22 @@ def check_closed_trades():
             order_id = last_trade['orderId']
             if order_id != ULTIMO_ORDER_ID_PROCESSADO:
                 pnl = float(last_trade['closedPnl'])
-                risk_mgr.update_dashboard(last_trade['symbol'], pnl)
+                symbol = last_trade['symbol']
+                risk_mgr.record_trade_result(symbol, pnl)
                 ULTIMO_ORDER_ID_PROCESSADO = order_id
+                # ✅ Notificar trade fechado
+                notifier.notify_trade_closed(last_trade)
+                log.info(f"📢 Notificação enviada para trade fechado em {symbol}")
     except Exception as e: log.error(f"Erro closed trades: {e}")
 
 def sync_historical_pnl():
+    global ULTIMO_ORDER_ID_PROCESSADO
     try:
-        start_date_display = "2026-04-19 00:00:00"
+        start_date_display = "2026-05-05 12:00:00"
         start_ts = int(datetime.datetime.strptime(start_date_display, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
         
         processed_orders = set()
+        last_processed_order_id = None
         log.info(f"🔄 Sincronizando histórico PnL desde {start_date_display} para {len(SYMBOLS)} moedas ativas: {', '.join(SYMBOLS)}")
         
         for symbol in SYMBOLS:
@@ -502,11 +553,16 @@ def sync_historical_pnl():
                         else: risk_mgr.stats['losses'] += 1
                         risk_mgr.stats['pnl_history'][symbol] = risk_mgr.stats['pnl_history'].get(symbol, 0) + pnl_liquido
                         risk_mgr.total_pnl_bruto += pnl_bruto
+                        risk_mgr.total_pnl += pnl_liquido
                         risk_mgr.total_fees += fees
                         processed_orders.add(order_id)
                         trades_count += 1
+                        last_processed_order_id = order_id
                 log.info(f"  ✅ {symbol}: {trades_count} trades sincronizados")
         
+        if last_processed_order_id is not None:
+            ULTIMO_ORDER_ID_PROCESSADO = last_processed_order_id
+
         if risk_mgr.stats['total_trades'] > 0:
             log.info(f"📊 Total após sincronização: {risk_mgr.stats['total_trades']} trades, WR: {(risk_mgr.stats['wins']/risk_mgr.stats['total_trades']*100):.1f}%")
     except Exception as e: log.error(f"Erro sync pnl: {e}")
@@ -529,7 +585,7 @@ def process_queue():
     while True:
         message = message_queue.get()
         if message is None: break
-        try: handle_signal_logic(message)
+        try: process_signal_message(message)
         except Exception as e: log.error(f"Erro fila: {e}")
         message_queue.task_done()
 
@@ -599,7 +655,7 @@ def check_market_heat():
     log.info("-------------------------------------")
     now_ts = time.time()
     if now_ts - LAST_REGIME_LOG >= 600:  # 10 minutos
-        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_stats()
+        total, wins, prot, wr, sr, pnl_net = risk_mgr.get_performance_summary()
         log.info(f"📊 REGIME SUMMARY | Cold:{num_cold} Lateral:{num_lateral} Normal:{num_normal} Hot:{num_hot}")
         log.info(f"💰 PERFORMANCE | WR:{wr:.1f}% | Trades:{total} | PnL:{pnl_net:+.2f}")
         LAST_REGIME_LOG = now_ts
@@ -612,7 +668,7 @@ def start_bot():
             timestamp_atual = time.time()
             get_cached_data()
             check_closed_trades()
-            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600 * 6:
+            if timestamp_atual - ULTIMO_CHECK_VIVO >= 3600 * 3:
                 notifier.send_heartbeat(risk_mgr, cache_balance, message_queue)
                 ULTIMO_CHECK_VIVO = timestamp_atual
             if timestamp_atual - ULTIMO_CHECK_CALOR >= 1800:
